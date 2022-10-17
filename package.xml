@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<package>
+  <name>hglmbslam</name>
+  <version>0.0.2</version>
+  <description>
+    Node to subscribe  tf and publish a path with the tf trajectory . 
+  </description>
+
+  <maintainer email="felipe.inostroza@amtc.uchile.cl">Felipe Inostroza</maintainer>
+  <license>BSD</license>
+
+
+  <build_depend>visualization_msgs</build_depend>
+  <build_depend>navigation_msgs</build_depend>
+  <build_depend>libpcl-all-dev</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <build_depend>roscpp</build_depend>
+
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+
+  <run_depend>geometry_msgs</run_depend>
+  <run_depend>rospy</run_depend>
+  <run_depend>sensor_msgs</run_depend>
+  <run_depend>std_msgs</run_depend>
+  <run_depend>visualization_msgs</run_depend>
+  <run_depend>navigation_msgs</run_depend>
+  <run_depend>roscpp</run_depend>
+  <run_depend>libpcl-all</run_depend>
+
+  <export>
+  </export>
+</package>
