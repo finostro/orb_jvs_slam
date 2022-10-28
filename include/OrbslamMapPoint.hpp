@@ -57,6 +57,11 @@ namespace rfs
         PointType *pPoint;
         int numDetections_;
         int numFoV_;
+        int id;
+        // creation
+        int  birthMatch;
+        OrbslamPose *birthPose;
+
         std::vector<int> is_in_fov_;
 
         // Mean viewing direction
@@ -68,6 +73,9 @@ namespace rfs
         // Scale invariance distances
         float mfMinDistance;
         float mfMaxDistance;
+
+        //hessian 
+        Eigen::Matrix<double, PointType::Dimension,	  PointType::Dimension> hessian;
 
 
         int predictScale(double dist, OrbslamPose *pPose);

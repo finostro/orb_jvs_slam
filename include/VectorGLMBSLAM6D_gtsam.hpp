@@ -1187,10 +1187,10 @@ void print_map(const MapType & m)
 		std::cout << "cam1 opencv_distort_coeffs: "
 				  << config.camera_parameters_[1].opencv_distort_coeffs << "\n";
 
-		//    std::cout << "cam0 M1: " << config.camera_parameters_[0].M1 << "\n";
-		//    std::cout << "cam0 M2: " << config.camera_parameters_[0].M2 << "\n";
-		//    std::cout << "cam1 M1: " << config.camera_parameters_[1].M1 << "\n";
-		//    std::cout << "cam1 M2: " << config.camera_parameters_[1].M2 << "\n";
+		    std::cout << "cam0 M1: " << config.camera_parameters_[0].M1 << "\n";
+		    std::cout << "cam0 M2: " << config.camera_parameters_[0].M2 << "\n";
+		    std::cout << "cam1 M1: " << config.camera_parameters_[1].M1 << "\n";
+		    std::cout << "cam1 M2: " << config.camera_parameters_[1].M2 << "\n";
 
 		config.orb_extractor.nFeatures = node["ORBextractor.nFeatures"].as<int>();
 		config.orb_extractor.scaleFactor = node["ORBextractor.scaleFactor"].as<double>();

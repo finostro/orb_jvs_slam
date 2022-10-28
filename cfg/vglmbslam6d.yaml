@@ -5,8 +5,8 @@ lmExistenceProb: 0.01
 
 
 
-PE: 0.05
-PD: 0.7
+PE: 0.001
+PD: 0.55
 numIterations: 200
 numGibbs: 10
 numLandmarks: 100
@@ -32,25 +32,25 @@ anchorInfo:
 odomInfo:
     rows: 6
     cols: 6
-    data: [10 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 10 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 10 , 0.0 , 0.0 , 0.0 ,
+    data: [1e20 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 1e20 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 1e20 , 0.0 , 0.0 , 0.0 ,
     0.0 , 0.0 , 0.0 , 10 , 0.0 , 0.0 ,
     0.0 , 0.0 , 0.0 , 0.0 , 10 , 0.0 ,
     0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 10 ]
 stereoInfo:
     rows: 3
     cols: 3
-    data: [.10 , 0.0 , 0.0 ,
-    0.0 , .10 , 0.0 ,
-    0.0 , 0.0 , .10 ]
-logKappa: -28.0
+    data: [.050 , 0.0 , 0.0 ,
+    0.0 , .050 , 0.0 ,
+    0.0 , 0.0 , .010 ]
+logKappa: -25.0
 
 
 viewingCosLimit: 0.5
 use_gui: true
-eurocFolder: /home/finostro/euroc_dataset/V203
-eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V203.txt
+eurocFolder: /home/finostro/euroc_dataset/V201
+eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V201.txt
 stereo_init_max_depth: 60.0
 
 # Camera calibration and distortion parameters (OpenCV) 

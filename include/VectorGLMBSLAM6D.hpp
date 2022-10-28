@@ -325,6 +325,12 @@ void print_map(const MapType & m)
 		 */
 		void constructGraph(VectorGLMBComponent6D &c);
 		/**
+		 * @brief update all the undetected landmark poses
+		 * 
+		 * @param c the GLMB component
+		 */
+		void moveBirth(VectorGLMBComponent6D &c);
+		/**
 		 *
 		 * Initialize a VGLMB component , setting the data association to all false alarms
 		 * @param c the GLMB component
@@ -385,6 +391,16 @@ void print_map(const MapType & m)
 		 * @param c the GLMB component
 		 */
 		void printDA(VectorGLMBComponent6D &c, std::ostream &s = std::cout);
+		/**
+		 * Check data association in graph and bimap match
+		 * @param c the GLMB component
+		 */
+		void checkDA(VectorGLMBComponent6D &c, std::ostream &s = std::cout);
+		/**
+		 * Check g2o graph is consistent
+		 * @param c the GLMB component
+		 */
+		void checkGraph(VectorGLMBComponent6D &c, std::ostream &s = std::cout);
 		/**
 		 * print the data association in component c
 		 * @param c the GLMB component
@@ -503,7 +519,7 @@ void print_map(const MapType & m)
 	void VectorGLMBSLAM6D::publishMarkers(VectorGLMBComponent6D &c)
 	{
 
-		print_map(c.DA_bimap_[0].left);
+		//print_map(c.DA_bimap_[0].left);
 		// latest pose tf
 		ros::spinOnce();
 		static tf2_ros::StaticTransformBroadcaster br;
@@ -529,16 +545,17 @@ void print_map(const MapType & m)
 
 		pcl::PointCloud<pcl::PointXYZI>::Ptr z_cloud(new pcl::PointCloud<pcl::PointXYZI>);
 		z_cloud->height = 1;
-		z_cloud->width = c.poses_[c.maxpose_].point_camera_frame.size();
+		z_cloud->width = c.poses_[c.maxpose_-1].point_camera_frame.size();
 		z_cloud->is_dense = false;
-		z_cloud->resize(c.poses_[c.maxpose_].point_camera_frame.size());
+		z_cloud->resize(c.poses_[c.maxpose_-1].point_camera_frame.size());
 
-		for (int i = 0; i < c.poses_[c.maxpose_].point_camera_frame.size(); i++)
+		for (int i = 0; i < c.poses_[c.maxpose_-1].point_camera_frame.size(); i++)
 		{
-			z_cloud->at(i).x = c.poses_[c.maxpose_].point_camera_frame[i][0];
-			z_cloud->at(i).y = c.poses_[c.maxpose_].point_camera_frame[i][1];
-			z_cloud->at(i).z = c.poses_[c.maxpose_].point_camera_frame[i][2];
+			z_cloud->at(i).x = c.poses_[c.maxpose_-1].point_camera_frame[i][0];
+			z_cloud->at(i).y = c.poses_[c.maxpose_-1].point_camera_frame[i][1];
+			z_cloud->at(i).z = c.poses_[c.maxpose_-1].point_camera_frame[i][2];
 			z_cloud->at(i).intensity = 1;
+			//std::cout << "z: " << z_cloud->at(i).x  << " , "<< z_cloud->at(i).y  << " , "<< z_cloud->at(i).z  << " \n";
 		}
 
 		pcl::PCLPointCloud2 pcl_debug;
@@ -646,7 +663,10 @@ void print_map(const MapType & m)
 		if (!c.optimizer_->verifyInformationMatrices(true)){
 			std::cerr << "info is bad\n";
 		}
-		c.optimizer_->optimize(config.numLevenbergIterations_);
+		checkDA(c);
+		//int g2o_result = c.optimizer_->optimize(config.numLevenbergIterations_);
+		assert(g2o_result > 0);
+		checkDA(c);
 	}
 	void VectorGLMBSLAM6D::sampleComponents()
 	{
@@ -719,7 +739,7 @@ void print_map(const MapType & m)
 			std::getline(fTimes, s);
 			if (!s.empty())
 			{
-				if (numFrame%2==0){
+				if (numFrame%1==0){
 				std::stringstream ss;
 				ss << s;
 				vstrImageLeft.push_back(pathCam0 + "/" + ss.str() + ".png");
@@ -729,7 +749,7 @@ void print_map(const MapType & m)
 					vTimestampsCam.push_back(t / 1e9);
 				}
 				numFrame++;
-				if (vTimestampsCam.size() > 100.0)
+				if (numFrame > 100)
 					break;
 			}
 		}
@@ -830,6 +850,8 @@ void print_map(const MapType & m)
 							  initial_component_.poses_[ni].keypoints_left, imLeftKeys,
 							  kpColor);
 			 cv::imshow("matches", imMatches);
+			 cv::imshow("imLeft", imLeft);
+			 cv::imshow("imLeft_rect", imLeft_rect);
 
 			 cv::waitKey(1); // Wait for a keystroke in the window
 			std::cout << ni + 1 << "/" << nImages << "                                   \r";
@@ -1123,9 +1145,15 @@ void print_map(const MapType & m)
 			config.camera_parameters_.push_back(params);
 		}
 
-		cv::Mat cvTlr = config.camera_parameters_[1].cv_c0_to_camera;
-		Sophus::SE3d Tlr = ORB_SLAM3::Converter::toSophusd(cvTlr);
+		Sophus::SE3d Tlr(config.camera_parameters_[1].cv_c0_to_camera_eigen);
 
+        std::cout << "Tlr0: "
+				  << Tlr.matrix3x4() << "\n";
+		cv::Mat cvTlr ;
+
+        cv::eigen2cv(Tlr.inverse().matrix3x4(),cvTlr);
+        std::cout << "cvTlr1: "
+				  << cvTlr << "\n";
 		cv::Mat R12 = cvTlr.rowRange(0, 3).colRange(0, 3);
 		R12.convertTo(R12, CV_64F);
 		cv::Mat t12 = cvTlr.rowRange(0, 3).col(3);
@@ -1164,14 +1192,33 @@ void print_map(const MapType & m)
 									config.camera_parameters_[1].newImSize, CV_32F,
 									config.camera_parameters_[1].M1, config.camera_parameters_[1].M2);
 
+        
+        std::cout << "config.camera_parameters_[1].cv_c0_to_camera: "
+				  << config.camera_parameters_[1].cv_c0_to_camera << "\n";    
+
+        std::cout << "cvTlr: "
+				  << cvTlr << "\n";
+        std::cout << "Tlr: "
+				  << Tlr.matrix3x4() << "\n";
+
+        std::cout << "R12: "
+				  << R12 << "\n";
+        std::cout << "t12: "
+				  << t12 << "\n";
+
 		std::cout << "cam0 opencv_calibration: "
 				  << config.camera_parameters_[0].opencv_calibration << "\n";
-		std::cout << "cam1 opencv_calibration: "
-				  << config.camera_parameters_[1].opencv_calibration << "\n";
 		std::cout << "cam0 opencv_distort_coeffs: "
 				  << config.camera_parameters_[0].opencv_distort_coeffs << "\n";
+		std::cout << "cam0 R_r1_u1: "
+				  << R_r1_u1 << "\n";
+
+		std::cout << "cam1 opencv_calibration: "
+				  << config.camera_parameters_[1].opencv_calibration << "\n";
 		std::cout << "cam1 opencv_distort_coeffs: "
 				  << config.camera_parameters_[1].opencv_distort_coeffs << "\n";
+		std::cout << "cam0 R_r2_u2: "
+				  << R_r2_u2 << "\n";
 
 		//    std::cout << "cam0 M1: " << config.camera_parameters_[0].M1 << "\n";
 		//    std::cout << "cam0 M2: " << config.camera_parameters_[0].M2 << "\n";
@@ -1219,13 +1266,15 @@ void print_map(const MapType & m)
 			c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
 			c.optimizer_->computeInitialGuess();
-			c.optimizer_->setVerbose(true);
+			c.optimizer_->setVerbose(false);
 			std::string filename = std::string("init") + std::to_string(i++) + ".g2o";
 			c.optimizer_->save(filename.c_str(), 0);
 		if (!c.optimizer_->verifyInformationMatrices(true)){
 			std::cerr << "info is bad\n";
 		}
-			std::cout << "niterations  " << c.optimizer_->optimize(1) << "\n";
+			int niterations = c.optimizer_->optimize(1);
+			std::cout << "niterations  " << niterations << "\n";
+			assert(niterations > 0);
 		}
 
 		// Visualization
@@ -1239,7 +1288,7 @@ void print_map(const MapType & m)
 		for (int i = 0; i < numSteps; i++)
 		{
 			maxpose_prev_ = maxpose_;
-			maxpose_ = 1 + components_[0].poses_.size() * i / (numSteps * 0.95);
+			maxpose_ = 2 + components_[0].poses_.size() * i / (numSteps * 0.95);
 
 			if (best_DA_max_detection_time_ + config.numPosesToOptimize_ < maxpose_)
 			{
@@ -1295,8 +1344,10 @@ void print_map(const MapType & m)
 		if (!c.optimizer_->verifyInformationMatrices(true)){
 			std::cerr << "info is bad\n";
 		}
-			c.optimizer_->optimize(30);
+			//int niterations = c.optimizer_->optimize(30);
+			assert(niterations > 0);
 			calculateWeight(c);
+			moveBirth(c);
 			updateDAProbs(c, k, k + 1);
 
 			AssociationProbabilities probs;
@@ -1309,7 +1360,7 @@ void print_map(const MapType & m)
 				int maxprobi = 0;
 				auto it = c.DA_bimap_[k].left.find(nz);
 				double selectedProb;
-				int selectedDA = -2;
+				int selectedDA = -5;
 				if (it != c.DA_bimap_[k].left.end())
 				{
 					selectedDA = it->second;
@@ -1325,7 +1376,7 @@ void print_map(const MapType & m)
 						maxlikelihood = likelihood;
 						maxlikelihoodi = a;
 					}
-					if (c.DAProbs_[k][nz].i[a] == -2)
+					if (c.DAProbs_[k][nz].i[a] == -5)
 					{
 						probs.i.push_back(c.DAProbs_[k][nz].i[a]);
 						probs.l.push_back(c.DAProbs_[k][nz].l[a]);
@@ -1380,7 +1431,7 @@ void print_map(const MapType & m)
 				}
 				int newdai = c.DAProbs_[k][nz].i[maxprobi];
 
-				if (newdai == -2)
+				if (newdai == -5)
 				{
 					// std::cout << "false alarm\n";
 				}
@@ -1504,14 +1555,16 @@ void print_map(const MapType & m)
 					c.optimizer_->initializeOptimization();
 					c.optimizer_->computeInitialGuess();
 					c.optimizer_->setVerbose(false);
-		if (!c.optimizer_->verifyInformationMatrices(true)){
-			std::cerr << "info is bad\n";
-		}
-					c.optimizer_->optimize(ni);
+					if (!c.optimizer_->verifyInformationMatrices(true)){
+						std::cerr << "info is bad\n";
+					}
+					//int niterations = c.optimizer_->optimize(ni);
+					assert(niterations > 0);
 
 					updateFoV(c);
 					// std::cout << "fov update: \n";
 
+					moveBirth(c);
 					updateDAProbs(c, minpose_, maxpose_);
 					// std::cout << "da update: \n";
 					c.prevDA_bimap_ = c.DA_bimap_;
@@ -1524,10 +1577,11 @@ void print_map(const MapType & m)
 					c.optimizer_->initializeOptimization();
 					c.optimizer_->computeInitialGuess();
 					c.optimizer_->setVerbose(false);
-		if (!c.optimizer_->verifyInformationMatrices(true)){
-			std::cerr << "info is bad\n";
-		}
-					c.optimizer_->optimize(ni);
+					if (!c.optimizer_->verifyInformationMatrices(true)){
+						std::cerr << "info is bad\n";
+					}
+					//niterations = c.optimizer_->optimize(ni);
+					assert(niterations > 0);
 					calculateWeight(c);
 
 					std::map<
@@ -1535,7 +1589,7 @@ void print_map(const MapType & m)
 							boost::bimap<int, int,
 										 boost::container::allocator<int>>>,
 						double>::iterator it;
-#pragma omp critical(bestweight)
+					#pragma omp critical(bestweight)
 					{
 						if (c.logweight_ > bestWeight_)
 						{
@@ -1554,7 +1608,7 @@ void print_map(const MapType & m)
 							std::cout << termcolor::yellow << "========== newbest:"
 									  << bestWeight_ << " ============\n"
 									  << termcolor::reset;
-							print_map(best_DA_[0].left);
+							printDA(c);
 							if (config.use_gui_)
 							{
 								std::cout << termcolor::yellow << "========== piblishingmarkers:"
@@ -1565,7 +1619,7 @@ void print_map(const MapType & m)
 						}
 					}
 					auto pair = std::make_pair(c.DA_bimap_, c.logweight_);
-#pragma omp critical(insert)
+					#pragma omp critical(insert)
 					{
 						std::tie(it, inserted) = visited_.insert(pair);
 						insertionP_ = insertionP_ * 0.9;
@@ -1576,34 +1630,41 @@ void print_map(const MapType & m)
 				}
 			}
 		}
-#pragma omp parallel for
+		#pragma omp parallel for
 		for (int i = 0; i < components_.size(); i++)
 		{
 			auto &c = components_[i];
 
 			int threadnum = 0;
-#ifdef _OPENMP
+			#ifdef _OPENMP
 			threadnum = omp_get_thread_num();
-#endif
-
+			#endif
+			checkGraph(c);
 			updateGraph(c);
+			checkGraph(c);
 			c.poses_[0].pPose->setFixed(true);
-			c.optimizer_->initializeOptimization(1);
+			c.optimizer_->initializeOptimization();
 			c.optimizer_->computeInitialGuess();
-			c.optimizer_->setVerbose(true);
-			std::cout  << "optimizing \n";
+			c.optimizer_->setVerbose(false);
+			//std::cout  << "optimizing \n";
 			c.optimizer_->save("initial.g2o");
-			c.optimizer_->optimize(ni);
-			std::cout  << "optimized \n";
+			int niterations = c.optimizer_->optimize(ni);
+			assert(niterations > 0);
+			//std::cout  << "optimized \n";
 			c.optimizer_->save("01.g2o");
+			checkGraph(c);
 
+			moveBirth(c);
+			checkGraph(c);
 			updateFoV(c);
-			std::cout  << "optimizing \n";
-		if (!c.optimizer_->verifyInformationMatrices(true)){
-			std::cerr << "info is bad\n";
-		}
-			c.optimizer_->optimize(ni);
-			std::cout  << "optimized \n";
+			checkGraph(c);
+			//std::cout  << "optimizing \n";
+			if (!c.optimizer_->verifyInformationMatrices(true)){
+				std::cerr << "info is bad\n";
+			}
+			//niterations = c.optimizer_->optimize(ni);
+			assert(niterations > 0);
+			//std::cout  << "optimized \n";
 			c.optimizer_->save("02.g2o");
 			if (!c.reverted_)
 				updateDAProbs(c, minpose_, maxpose_);
@@ -1620,7 +1681,9 @@ void print_map(const MapType & m)
 
 			{
 				// do{
+				checkGraph(c);
 				selectNN(c);
+				checkGraph(c);
 				expectedChange += sampleDA(c);
 				/*
 				 std::cout << termcolor::magenta <<" =========== SexyTime!============\n" << termcolor::reset;
@@ -1694,19 +1757,27 @@ void print_map(const MapType & m)
 			 }
 			 */
 			// printDAProbs(c);
+			checkGraph(c);
 			updateGraph(c);
+			checkGraph(c);
 			c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
 			c.optimizer_->computeInitialGuess();
 			c.optimizer_->setVerbose(false);
-		if (!c.optimizer_->verifyInformationMatrices(true)){
-			std::cerr << "info is bad\n";
-		}
-			c.optimizer_->optimize(ni);
+			if (!c.optimizer_->verifyInformationMatrices(true)){
+				std::cerr << "info is bad\n";
+			}
+			//niterations = c.optimizer_->optimize(ni);
+			assert(niterations > 0);
 			// std::cout <<"niterations  " <<c.optimizer_->optimize(ni) << "\n";
 			calculateWeight(c);
+			std::cout << termcolor::blue << "========== current:"
+							  <<  c.logweight_ << " ============\n"
+							  << termcolor::reset;
+			
+			checkGraph(c);
 
-#pragma omp critical(bestweight)
+			#pragma omp critical(bestweight)
 			{
 				if (c.logweight_ > bestWeight_)
 				{
@@ -1725,6 +1796,7 @@ void print_map(const MapType & m)
 					std::cout << termcolor::yellow << "========== newbest:"
 							  << bestWeight_ << " ============\n"
 							  << termcolor::reset;
+					printDA(c);
 
 					if (config.use_gui_)
 					{
@@ -1786,7 +1858,7 @@ void print_map(const MapType & m)
 			for (int nz = 0; nz < c.poses_[k].Z_.size(); nz++)
 			{
 				auto it = c.DA_bimap_[k].left.find(nz);
-				int selectedDA = -2;
+				int selectedDA = -5;
 				if (it != c.DA_bimap_[k].left.end())
 				{
 					selectedDA = it->second;
@@ -1842,79 +1914,95 @@ void print_map(const MapType & m)
 
 	inline void VectorGLMBSLAM6D::updateGraph(VectorGLMBComponent6D &c)
 	{
+		checkGraph(c);
 		for (int k = 0; k < maxpose_; k++)
 		{
+			int prevedges =  c.poses_[k].pPose->edges().size();
+			int numselections=0;
+			int addededges = 0;
 			for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
 			{
-				int selectedDA = -2;
+				int selectedDA = -5;
 				auto it = c.DA_bimap_[k].left.find(nz);
 
 				if (it != c.DA_bimap_[k].left.end())
 				{
 					selectedDA = it->second;
 				}
+				if (selectedDA>=0){
+					numselections++;
+				}
 				int previd =
-					c.poses_[k].Z_[nz]->vertex(1) ? c.poses_[k].Z_[nz]->vertex(1)->id() : -2; /**< previous data association */
+					c.poses_[k].Z_[nz]->vertex(0) ? c.poses_[k].Z_[nz]->vertex(0)->id() : -5; /**< previous data association */
+				if (previd >= 0)
+				{
+					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
+				}else{
+					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) == c.optimizer_->edges().end() );
+				}
 				if (previd == selectedDA)
 				{
 					continue;
 				}
 				if (selectedDA >= 0)
 				{
-
+					// if vertex is not in graph add it
+					auto vertex_it = c.optimizer_->vertices().find( selectedDA);
+					if ( vertex_it == c.optimizer_->vertices().end() ){
+						c.optimizer_->addVertex(c.landmarks_[selectedDA-c.landmarks_[0].id].pPoint);
+					}
+					auto vertex_pt = dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.optimizer_->vertices().find(selectedDA)->second);
+					assert( vertex_pt == c.landmarks_[selectedDA-c.landmarks_[0].id].pPoint );
 					// if edge was already in graph, modify it
 					if (previd >= 0)
 					{
+						assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
 						c.optimizer_->setEdgeVertex(c.poses_[k].Z_[nz], 0,
-													dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.optimizer_->vertices().find(
-																															  selectedDA)
-																									  ->second)); // this removes the edge from the list in both vertices
+													vertex_pt); // this removes the edge from the list in both vertices
+						if (c.landmarks_[previd-c.landmarks_[0].id].pPoint->edges().size() == 0 ){
+							c.optimizer_->removeVertex(c.landmarks_[previd-c.landmarks_[0].id].pPoint);
+						}
 					}
 					else
 					{
-						c.poses_[k].Z_[nz]->setVertex(0,
-													  dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.optimizer_->vertices().find(
-																																selectedDA)
-																										->second));
-						if(c.poses_[k].initial_lm_id[nz]<0){
-							c.optimizer_->addEdge(c.poses_[k].Z_[nz]);
-						}																			
+						addededges++;
+						c.poses_[k].Z_[nz]->setVertex(0,  vertex_pt);
+						
+						c.optimizer_->addEdge(c.poses_[k].Z_[nz]);
+						assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
+																							
 					}
+					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
 				}
 				else
 				{
-					if(c.poses_[k].initial_lm_id[nz]>=0){
-						c.optimizer_->setEdgeVertex(c.poses_[k].Z_[nz], 0,
-													dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.optimizer_->vertices().find(
-																															c.poses_[k].initial_lm_id[nz])
-																									->second)); // this removes the edge from the list in both vertices
-
-					}else{
-						c.optimizer_->removeEdge(c.poses_[k].Z_[nz]);
-						c.optimizer_->removeVertex(c.poses_[k].i);
-						c.poses_[k].Z_[nz]->setVertex(0, NULL);
+					c.optimizer_->removeEdge(c.poses_[k].Z_[nz]);
+					c.poses_[k].Z_[nz]->setVertex(0, NULL);
+					if (c.landmarks_[previd-c.landmarks_[0].id].pPoint->edges().size() == 0 ){
+						c.optimizer_->removeVertex(c.landmarks_[previd-c.landmarks_[0].id].pPoint);
 					}
+					
 				}
+				
 			}
+			int expected_num_edges = c.DA_bimap_[k].size()+1;
+			if (k>0 && k < c.poses_.size()-1){
+				expected_num_edges++;
+			}
+			if(c.poses_[k].pPose->edges().size() !=  expected_num_edges ){
+				checkDA(c);
+				assert(0);
+			}
+			
 		}
-		for (auto lm : c.landmarks_)
-		{
-			// if landmark has only 1 edge then it is not detected we deactivate it
-			if (lm.pPoint->edges().size() == 1)
-			{
-				for (auto edge : lm.pPoint->edges())
-				{
-					dynamic_cast<g2o::OptimizableGraph::Edge *>(edge)->setLevel(1);
-				}
-			}
-			else
-			{
-				for (auto edge : lm.pPoint->edges())
-				{
-					dynamic_cast<g2o::OptimizableGraph::Edge *>(edge)->setLevel(0);
-				}
-			}
+		for (auto &lm:c.landmarks_){
+			if (lm.numDetections_ != lm.pPoint->edges().size() ){
+								printDA(c);
+								assert(0);
+							}
+
 		}
+
 	}
 	template <class MapType>
 	void print_map(const MapType &m, std::ostream &s = std::cout)
@@ -1958,13 +2046,86 @@ void print_map(const MapType & m)
 			std::cout << "\n";
 		}
 	}
+
 	inline void VectorGLMBSLAM6D::printDA(VectorGLMBComponent6D &c,
 										  std::ostream &s)
 	{
+		s << "bimap: \n";
 		for (int k = 0; k < c.DA_bimap_.size(); k++)
 		{
 			s << k << ":\n";
 			print_map(c.DA_bimap_[k].left, s);
+		}
+
+		// s << "optimizer: \n";
+
+		// for (int k = 0; k < c.poses_.size(); k++)
+		// {
+		// 	s << k << ":\n";
+		// 	for(int nz =0; nz < c.poses_[k].Z_.size(); nz++){
+		// 		s << nz << " : " <<  (c.poses_[k].Z_[nz]->vertex(0) ? c.poses_[k].Z_[nz]->vertex(0)->id():-10) << "\n";
+		// 	}
+		// }
+	}
+
+	inline void VectorGLMBSLAM6D::checkDA(VectorGLMBComponent6D &c,
+										  std::ostream &s)
+	{
+		//s << "bimap: \n";
+		for (int k = 0; k < c.DA_bimap_.size(); k++)
+		{
+			//s << k << ":\n";
+			//print_map(c.DA_bimap_[k].left, s);
+		}
+
+		//s << "optimizer: \n";
+
+		for (int k = 0; k < c.poses_.size(); k++)
+		{
+			//s << k << ":\n";
+			for(int nz =0; nz < c.poses_[k].Z_.size(); nz++){
+				int graph_da = (c.poses_[k].Z_[nz]->vertex(0) ? c.poses_[k].Z_[nz]->vertex(0)->id():-5);
+				
+				auto it = c.DA_bimap_[k].left.find(nz);
+				int bimap_da = -5;
+				if (it != c.DA_bimap_[k].left.end())
+				{
+					bimap_da = it->second;
+				}
+				assert(graph_da == bimap_da);
+				if (graph_da>=0){
+					
+					assert (c.optimizer_->vertices().find(c.poses_[k].Z_[nz]->vertex(0)->id() ) != c.optimizer_->vertices().end() );
+					assert (c.optimizer_->vertices().find(c.poses_[k].Z_[nz]->vertex(0)->id()) != c.optimizer_->vertices().end() );
+					assert (c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
+				}
+
+			}
+		}
+	}
+	inline void VectorGLMBSLAM6D::checkGraph(VectorGLMBComponent6D &c,
+										  std::ostream &s)
+	{
+
+		for (int k = 0; k < c.poses_.size(); k++)
+		{
+			
+			for(int nz =0; nz < c.poses_[k].Z_.size(); nz++){
+				int graph_da = (c.poses_[k].Z_[nz]->vertex(0) ? c.poses_[k].Z_[nz]->vertex(0)->id():-5);
+				
+
+
+				if (graph_da>=0){
+					
+					assert (c.optimizer_->vertices().find(c.poses_[k].Z_[nz]->vertex(0)->id() ) != c.optimizer_->vertices().end() );
+					assert (c.optimizer_->vertices().find(c.poses_[k].Z_[nz]->vertex(0)->id()) != c.optimizer_->vertices().end() );
+					assert (c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
+				}else{
+
+					assert (c.optimizer_->edges().find(c.poses_[k].Z_[nz]) == c.optimizer_->edges().end() );
+				}
+
+			}
 		}
 	}
 
@@ -2176,7 +2337,7 @@ void print_map(const MapType & m)
 				int maxprobi = 0;
 				auto it = c.DA_bimap_[k].left.find(nz);
 				double selectedProb;
-				int selectedDA = -2;
+				int selectedDA = -5;
 				if (it != c.DA_bimap_[k].left.end())
 				{
 					selectedDA = it->second;
@@ -2192,7 +2353,7 @@ void print_map(const MapType & m)
 						maxlikelihood = likelihood;
 						maxlikelihoodi = a;
 					}
-					if (c.DAProbs_[k][nz].i[a] == -2)
+					if (c.DAProbs_[k][nz].i[a] == -5)
 					{
 						probs.i.push_back(c.DAProbs_[k][nz].i[a]);
 						probs.l.push_back(c.DAProbs_[k][nz].l[a]);
@@ -2390,14 +2551,21 @@ void print_map(const MapType & m)
 
 				// setting the topology of DAProbs to include all measurements in current FoV
 				c.DAProbs_[k][nz].i = c.poses_[k].fov_;
-				c.DAProbs_[k][nz].i.push_back(-2); // add posibility of false alarm
+				c.DAProbs_[k][nz].i.push_back(-5); // add posibility of false alarm
 				c.DAProbs_[k][nz].l.resize(c.DAProbs_[k][nz].i.size());
 
 				auto it = c.DA_bimap_[k].left.find(nz);
-				int selectedDA = -2;
+				int selectedDA = -5;
 				if (it != c.DA_bimap_[k].left.end())
 				{
 					selectedDA = it->second;
+				}
+				if (selectedDA < 0){
+					assert(c.poses_[k].Z_[nz]->vertex(0) == NULL);
+					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) == c.optimizer_->edges().end() );
+				}else{
+					assert(c.poses_[k].Z_[nz]->vertex(0)->id() == selectedDA);
+					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
 				}
 				Eigen::Matrix<double, PoseType::HessianBlockType::RowsAtCompileTime,
 							  PoseType::HessianBlockType::ColsAtCompileTime>
@@ -2417,18 +2585,16 @@ void print_map(const MapType & m)
 				for (int a = 0; a < c.DAProbs_[k][nz].i.size(); a++)
 				{
 					c.DAProbs_[k][nz].l[a] = 0;
-					if (c.DAProbs_[k][nz].i[a] == -2)
+					if (c.DAProbs_[k][nz].i[a] == -5)
 					{ // set measurement to false alarm
 						c.DAProbs_[k][nz].l[a] = config.logKappa_;
 					}
 					else
 					{
+						auto &lm = c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id];
 
 						c.DAProbs_[k][nz].l[a] += std::log(config.PD_) - std::log(1 - config.PD_);
-						c.poses_[k].Z_[nz]->setVertex(0,
-													  dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.optimizer_->vertices().find(
-																																c.DAProbs_[k][nz].i[a])
-																										->second));
+						c.poses_[k].Z_[nz]->setVertex(0, lm.pPoint);
 
 						c.poses_[k].Z_[nz]->g2o::BaseBinaryEdge<3, g2o::Vector3, PointType, PoseType>::linearizeOplus(jac_ws);
 						c.poses_[k].Z_[nz]->computeError();
@@ -2526,11 +2692,31 @@ void print_map(const MapType & m)
 						else
 						{ // if pose is fixed only calculate updated landmark
 							//c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].pPoint->solveDirect();
-							PointType::HessianBlockType pointHessian(
-								c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
+							auto &lm = c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id];
+							
+							PointType::HessianBlockType::PlainMatrix h;
+							PointType::HessianBlockType pointHessian(h.data());
 
 							StereoMeasurementEdge::JacobianXiOplusType Jpoint =
 								c.poses_[k].Z_[nz]->jacobianOplusXi();
+
+							if (lm.numDetections_ != lm.pPoint->edges().size() ){
+								checkDA(c);
+								assert(0);
+							}
+
+							if (lm.numDetections_ > 0)
+							{
+								new (&pointHessian) PointType::HessianBlockType(
+									c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
+
+								// std::cout << "g2o pointH: " << pointHessian << "\n\n\n";
+							}
+							else
+							{
+								h = config.anchorInfo_;
+								// std::cout << "calc pointH: " << pointHessian << "\n\n\n";
+							}
 
 							Eigen::Matrix<double, PointType::Dimension,
 										  PointType::Dimension>
@@ -2592,19 +2778,14 @@ void print_map(const MapType & m)
 																									->second));
 					c.poses_[k].Z_[nz]->linearizeOplus();
 					c.poses_[k].Z_[nz]->computeError();
+					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
 				}
 				else
 				{
 
-					if(c.poses_[k].initial_lm_id[nz]>=0){
-						c.optimizer_->setEdgeVertex(c.poses_[k].Z_[nz], 0,
-													dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.optimizer_->vertices().find(
-																															c.poses_[k].initial_lm_id[nz])
-																									->second)); // this removes the edge from the list in both vertices
-
-					}else{
-						c.poses_[k].Z_[nz]->setVertex(0, NULL);
-					}
+					c.poses_[k].Z_[nz]->setVertex(0, NULL);
+					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) == c.optimizer_->edges().end() );
+					
 				}
 			}
 		}
@@ -2644,8 +2825,10 @@ void print_map(const MapType & m)
 
 		lm.pPoint = new PointType();
 		lm.pPoint->setId(newId);
+		lm.id = newId;
 
-
+		lm.birthMatch = numMatch;
+		lm.birthPose = &pose;
 
 		Eigen::Vector3d point_world_frame;
 
@@ -2664,18 +2847,35 @@ void print_map(const MapType & m)
 		}
 
 		pose.initial_lm_id[numMatch] = newId;
-		pose.Z_[numMatch]->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(lm.pPoint));
+		//pose.Z_[numMatch]->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(lm.pPoint));
 
 		lm.normalVector = pose.point_camera_frame[numMatch].normalized();
 		// with only 2 descriptors (left,right) we can pick either one to represent the point
 		// allocating new
 		pose.descriptors_left.row(nl).copyTo(lm.descriptor);
 
-		point_world_frame = pose.pPose->estimate().inverse().map(pose.point_camera_frame[numMatch]);
+		point_world_frame = pose.pPose->estimate().map(pose.point_camera_frame[numMatch]);
 		lm.pPoint->setEstimate(point_world_frame);
-		pose.Z_[numMatch]->computeError();
+		//pose.Z_[numMatch]->computeError();
 
 		return true;
+	}
+
+
+	void VectorGLMBSLAM6D::moveBirth(VectorGLMBComponent6D &c)
+	{
+
+		for( OrbslamMapPoint &lm:c.landmarks_){
+			if ( lm.numDetections_ == 0){
+				
+
+				Eigen::Vector3d point_world_frame;
+				point_world_frame = lm.birthPose->pPose->estimate().map(lm.birthPose->point_camera_frame[lm.birthMatch]);
+				lm.pPoint->setEstimate(point_world_frame);
+
+			}
+		}
+
 	}
 
 	inline void VectorGLMBSLAM6D::constructGraph(VectorGLMBComponent6D &c)
@@ -2716,17 +2916,19 @@ void print_map(const MapType & m)
 			{
 				OrbslamMapPoint lm;
 				initStereoEdge(c.poses_[k], nz);
+				cam_unproject(*c.poses_[k].Z_[nz], c.poses_[k].point_camera_frame[nz]);
+		
 				if (k%10==0){
 					if (initMapPoint(c.poses_[k], nz, lm, edgeid))
 					{
 						edgeid++;
-						c.optimizer_->addVertex(lm.pPoint);
+						//c.optimizer_->addVertex(lm.pPoint);
 						c.landmarks_.push_back(lm);
 
-						if (!c.optimizer_->addEdge(c.poses_[k].Z_[nz]))
-						{
-							std::cerr << "initial measurement edge insert fail \n";
-						}
+						// if (!c.optimizer_->addEdge(c.poses_[k].Z_[nz]))
+						// {
+						// 	std::cerr << "initial measurement edge insert fail \n";
+						// }
 					}
 				}
 			}

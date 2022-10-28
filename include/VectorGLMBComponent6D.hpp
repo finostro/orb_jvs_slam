@@ -101,7 +101,6 @@ struct VectorGLMBComponent6D {
 	std::vector<boost::bimap<int, int, boost::container::allocator<int>>>
 			DA_bimap_, prevDA_bimap_; /**< Bimap containing data association hypothesis at time k  */
 
-	std::vector<std::vector<StereoMeasurementEdge*> > Z_; /**< Measurement edges stored, in order to set data association and add to graph later */
 	std::vector<std::vector<AssociationProbabilities> > DAProbs_; /**< DAProbs_ [k][nz] are is the association probabilities of measurement
 	 nz at time k, used for switching using gibbs sampling*/
 
