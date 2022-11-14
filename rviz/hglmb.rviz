@@ -62,7 +62,7 @@ Visualization Manager:
       Enabled: true
       Head Diameter: 0.30000001192092896
       Head Length: 0.20000000298023224
-      Length: 0.30000001192092896
+      Length: 0.10000000149011612
       Line Style: Lines
       Line Width: 0.029999999329447746
       Name: Path
@@ -73,7 +73,7 @@ Visualization Manager:
       Pose Color: 255; 85; 255
       Pose Style: Axes
       Queue Size: 10
-      Radius: 0.029999999329447746
+      Radius: 0.009999999776482582
       Shaft Diameter: 0.10000000149011612
       Shaft Length: 0.10000000149011612
       Topic: /hglmbslam/est_traj
@@ -156,6 +156,14 @@ Visualization Manager:
             {}
       Update Interval: 0
       Value: true
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /hglmbslam/association
+      Name: Marker
+      Namespaces:
+        my_namespace: true
+      Queue Size: 100
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -184,7 +192,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 9.262459754943848
+      Distance: 1.7027342319488525
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -192,17 +200,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: -0.11491400003433228
-        Y: 1.9273688793182373
-        Z: 3.392266273498535
+        X: -0.16532652080059052
+        Y: -0.18263860046863556
+        Z: -0.17325660586357117
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: -1.1347973346710205
+      Pitch: -1.4797977209091187
       Target Frame: <Fixed Frame>
-      Yaw: 4.795449733734131
+      Yaw: 4.650448799133301
     Saved: ~
 Window Geometry:
   Displays:
