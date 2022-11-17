@@ -113,6 +113,8 @@ OrbslamPose::OrbslamPose(const OrbslamPose &other): mnScaleLevels(other.mnScaleL
 
 }
 
+
+
 OrbslamPose::OrbslamPose(): mnScaleLevels(0),
 		mfScaleFactor(0.0),
 		mfLogScaleFactor(0.0),
@@ -123,5 +125,7 @@ OrbslamPose::OrbslamPose(): mnScaleLevels(0),
 	pPose= NULL;
 
 }
+
+
 
 }

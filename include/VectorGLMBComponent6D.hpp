@@ -115,6 +115,32 @@ struct VectorGLMBComponent6D {
 	std::vector<std::pair<int, int>> tomerge_; /**< proportional to probability of merge heuristic*/
 
     int maxpose_; /**< maximum pose to optimize to */
+
+
+
+
+    void saveAsTUM(std::string filename){
+		std::ofstream file;
+		file.open(filename);
+		file << std::setprecision(20) ;
+
+		for (auto &pose:poses_){
+			file 	<< pose.stamp << " "
+					<< pose.pPose->estimate().inverse().translation().x() << " "
+					<< pose.pPose->estimate().inverse().translation().y() << " "
+					<< pose.pPose->estimate().inverse().translation().z() << " "
+					<< pose.pPose->estimate().inverse().rotation().x() << " "
+					<< pose.pPose->estimate().inverse().rotation().y() << " "
+					<< pose.pPose->estimate().inverse().rotation().z() << " "
+					<< pose.pPose->estimate().inverse().rotation().w() << "\n";
+		}
+
+	}
+
+
+
+
+
 };
 
 }

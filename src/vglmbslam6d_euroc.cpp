@@ -28,11 +28,13 @@ int main(int argc, char* argv[]){
 
   vglmb.loadConfig(cfgFileName);
   vglmb.loadEuroc();
+  vglmb.gt_traj.loadTUM("gt.tum");
   //vglmb.calculateWeight(vglmb.gt_graph);
   //std::cout << "GROUND TRUTH WEIGHT:             " <<vglmb.gt_graph.logweight_ << "\n";
   //std::cout << "weight: " << vglmb.gt_graph.logweight_ << "   chi2:  " <<vglmb.gt_graph.optimizer_->chi2() << "  determinant: " << vglmb.gt_graph.linearSolver_->_determinant<< "\n";
 
   vglmb.initComponents();
+
 
 
   
@@ -53,12 +55,12 @@ int main(int argc, char* argv[]){
 		ProfilerStop();
 #endif
 
-  vglmb.components_[0].optimizer_->save(vglmb.config.finalStateFile_.c_str() , 0);
-  vglmb.components_[0].DA_bimap_ = vglmb.best_DA_;
-  vglmb.updateGraph(vglmb.components_[0]);
-  vglmb.components_[0].optimizer_->initializeOptimization();
-  vglmb.components_[0].optimizer_->optimize(50);
-  vglmb.components_[0].optimizer_->save("beststate.g2o" , 0);
+  // vglmb.components_[0].optimizer_->save(vglmb.config.finalStateFile_.c_str() , 0);
+  // vglmb.components_[0].DA_bimap_ = vglmb.best_DA_;
+  // vglmb.updateGraph(vglmb.components_[0]);
+  // vglmb.components_[0].optimizer_->initializeOptimization();
+  // vglmb.components_[0].optimizer_->optimize(50);
+  // vglmb.components_[0].optimizer_->save("beststate.g2o" , 0);
 
 
   vglmb.waitForGuiClose();

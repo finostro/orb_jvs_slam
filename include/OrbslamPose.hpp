@@ -58,6 +58,8 @@ namespace rfs
          std::vector<float> mvLevelSigma2;
          std::vector<float> mvInvLevelSigma2;
 
+        //timestamp
+        double stamp;
         // image bounds
 
         double mnMinX;
@@ -95,6 +97,7 @@ namespace rfs
          * @return false point should not be measured
          */
         bool isInFrustum(OrbslamMapPoint *pMP, float viewingCosLimit, g2o::CameraParameters *cam_params);
+
 
         /**
          *
