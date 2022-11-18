@@ -119,20 +119,22 @@ struct VectorGLMBComponent6D {
 
 
 
-    void saveAsTUM(std::string filename){
+    void saveAsTUM(std::string filename, g2o::SE3Quat base_link_to_cam0_se3){
 		std::ofstream file;
 		file.open(filename);
 		file << std::setprecision(20) ;
 
 		for (auto &pose:poses_){
+			g2o::SE3Quat p = pose.pPose->estimate().inverse()*base_link_to_cam0_se3.inverse();
+			
 			file 	<< pose.stamp << " "
-					<< pose.pPose->estimate().inverse().translation().x() << " "
-					<< pose.pPose->estimate().inverse().translation().y() << " "
-					<< pose.pPose->estimate().inverse().translation().z() << " "
-					<< pose.pPose->estimate().inverse().rotation().x() << " "
-					<< pose.pPose->estimate().inverse().rotation().y() << " "
-					<< pose.pPose->estimate().inverse().rotation().z() << " "
-					<< pose.pPose->estimate().inverse().rotation().w() << "\n";
+					<< p.translation().x() << " "
+					<< p.translation().y() << " "
+					<< p.translation().z() << " "
+					<< p.rotation().x() << " "
+					<< p.rotation().y() << " "
+					<< p.rotation().z() << " "
+					<< p.rotation().w() << "\n";
 		}
 
 	}

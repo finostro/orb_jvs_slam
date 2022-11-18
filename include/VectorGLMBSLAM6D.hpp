@@ -126,7 +126,7 @@ namespace rfs
 		double weight;
 		std::vector<g2o::SE3Quat> trajectory;
 
-    void loadTUM(std::string filename){
+    void loadTUM(std::string filename, g2o::SE3Quat base_link_to_cam0_se3){
 		std::ifstream file;
 		file.open(filename);
 		std::string line;
@@ -146,6 +146,7 @@ namespace rfs
 			file >> q.w();
 			pose.setTranslation(t);
 			pose.setRotation(q);
+			pose = pose*base_link_to_cam0_se3;
 			trajectory.push_back(pose);
 		}
 		g2o::SE3Quat init_pose = trajectory[0];
@@ -183,6 +184,13 @@ void print_map(const MapType & m)
 		}
 
 		return dist;
+	}
+	inline double dist2loglikelihood(int d){
+		double dd=d/255.0;
+		static constexpr double a = std::log(1.0/8.0);
+		static constexpr double b = std::log(7.0/8.0);
+		static constexpr double c = std::log(1.0/2.0);
+		return 1;// 20*(d*a+(1-d)*b+c);
 	}
 
 	/**
@@ -252,6 +260,9 @@ void print_map(const MapType & m)
 
 			bool use_gui_;
 
+
+			Eigen::MatrixXd base_link_to_cam0;
+			g2o::SE3Quat base_link_to_cam0_se3;
 			// camera distortion params
 
 			struct CameraParams
@@ -299,6 +310,9 @@ void print_map(const MapType & m)
 
 			} orb_extractor;
 
+			//frames to load
+			int minframe;
+			int maxframe;
 		} config;
 
 		/**
@@ -602,7 +616,7 @@ void print_map(const MapType & m)
 			for (int i = 0; i < c.poses_[k].point_camera_frame.size(); i++)
 			{
 				auto point_world_frame = c.poses_[k].pPose->estimate().inverse().map(c.poses_[k].point_camera_frame[i]);
-
+				
 				pcl::PointXYZI point ;
 				point.x = point_world_frame[0];
 				point.y = point_world_frame[1];
@@ -869,7 +883,7 @@ void print_map(const MapType & m)
 			std::getline(fTimes, s);
 			if (!s.empty())
 			{
-				if (numFrame > 60 && numFrame%1==0){
+				if (numFrame > config.minframe && numFrame%1==0){
 				std::stringstream ss;
 				ss << s;
 				vstrImageLeft.push_back(pathCam0 + "/" + ss.str() + ".png");
@@ -879,7 +893,7 @@ void print_map(const MapType & m)
 					vTimestampsCam.push_back(t / 1e9);
 				}
 				numFrame++;
-				if (numFrame > 1000)
+				if (numFrame > config.maxframe )
 					break;
 			}
 		}
@@ -1156,11 +1170,12 @@ void print_map(const MapType & m)
 					}
 					pose.depth[iL] = config.stereo_baseline_f / disparity;
 					pose.uRight[iL] = bestuR;
-
+					if (pose.depth[iL]<60.0){
 					pose.matches_left_to_right.push_back(
 						cv::DMatch(iL, bestIdxR, bestDist));
 
 					vDistIdx.push_back(std::pair<int, int>(bestDist, iL));
+					}
 				}
 			}
 		}
@@ -1205,6 +1220,8 @@ void print_map(const MapType & m)
 		config.ylim_.push_back(node["ylim"][1].as<double>());
 		config.initTemp_ = node["initTemp"].as<double>();
 		config.tempFactor_ = node["tempFactor"].as<double>();
+		config.minframe = node["minframe"].as<int>();
+		config.maxframe = node["maxframe"].as<int>();
 
 		config.crossoverNumIter_ = node["crossoverNumIter"].as<int>();
 		config.numPosesToOptimize_ = node["numPosesToOptimize"].as<int>();
@@ -1239,6 +1256,18 @@ void print_map(const MapType & m)
 
 		config.eurocTimestampsFilename_ = node["eurocTimestampsFilename"].as<std::string>();
 
+		if (!YAML::convert<Eigen::MatrixXd>::decode(node["base_link_to_cam0"],
+														config.base_link_to_cam0))
+		{
+			std::cerr << "could not load base_link_to_cam0 \n";
+			exit(1);
+		}
+		config.base_link_to_cam0_se3.setTranslation( config.base_link_to_cam0.col(3).head(3));
+		Eigen::Matrix3d rotMat= config.base_link_to_cam0.block(0,0,3,3);
+		Eigen::Quaterniond q(rotMat)  ;
+		config.base_link_to_cam0_se3.setRotation( q );
+
+
 		for (auto camera : node["camera_params"])
 		{
 			Config::CameraParams params;
@@ -1258,7 +1287,7 @@ void print_map(const MapType & m)
 			if (!YAML::convert<Eigen::MatrixXd>::decode(camera["cv_c0_to_camera"],
 														params.cv_c0_to_camera_eigen))
 			{
-				std::cerr << "could not load principal_point \n";
+				std::cerr << "could not load cv_c0_to_camera \n";
 				exit(1);
 			}
 			cv::eigen2cv(params.cv_c0_to_camera_eigen, params.cv_c0_to_camera);
@@ -1417,7 +1446,7 @@ void print_map(const MapType & m)
 	inline void VectorGLMBSLAM6D::run(int numSteps)
 	{
 
-		for (int i = 0; i < numSteps; i++)
+		for (int i = 0; i < numSteps && ros::ok(); i++)
 		{
 			maxpose_prev_ = maxpose_;
 			maxpose_ = 2 + components_[0].poses_.size() * i / (numSteps * 0.95);
@@ -1960,7 +1989,7 @@ void print_map(const MapType & m)
 					static int numbest=0;
 					name <<  "best__" << numbest++ << ".tum"; 
 					//c.optimizer_->save(name.str().c_str());
-					c.saveAsTUM(name.str());
+					c.saveAsTUM(name.str(),config.base_link_to_cam0_se3);
 
 					if (config.use_gui_)
 					{
@@ -2750,7 +2779,8 @@ void print_map(const MapType & m)
 					auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
 					int dist = descriptorDistance(c.poses_[k].descriptors_left.row(c.poses_[k].matches_left_to_right[nz].queryIdx),
 					lm.descriptor);
-					if (dist < thOrbDist){
+
+					if (dist < 50){
 						c.DAProbs_[k][nz].i.push_back(lmidx); 
 					}
 					
@@ -2796,6 +2826,10 @@ void print_map(const MapType & m)
 					else
 					{
 						auto &lm = c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id];
+
+						int dist = descriptorDistance(c.poses_[k].descriptors_left.row(c.poses_[k].matches_left_to_right[nz].queryIdx),
+					lm.descriptor);
+						c.DAProbs_[k][nz].l[a] += dist2loglikelihood(dist);
 
 						c.DAProbs_[k][nz].l[a] += std::log(config.PD_) - std::log(1 - config.PD_);
 						c.poses_[k].Z_[nz]->setVertex(0, lm.pPoint);
@@ -3147,7 +3181,7 @@ void print_map(const MapType & m)
 				initStereoEdge(c.poses_[k], nz);
 				cam_unproject(*c.poses_[k].Z_[nz], c.poses_[k].point_camera_frame[nz]);
 		
-				if (k%10==0){
+				if (k%5==0){
 					if (initMapPoint(c.poses_[k], nz, lm, edgeid))
 					{
 						edgeid++;
@@ -3190,6 +3224,11 @@ void print_map(const MapType & m)
 		trans_xyz[2] = config.stereo_baseline_f / (meas[0] - meas[2]);
 		trans_xyz[0] = (meas[0] - config.camera_parameters_[0].cx) * trans_xyz[2] / config.camera_parameters_[0].fx;
 		trans_xyz[1] = (meas[1] - config.camera_parameters_[0].cy) * trans_xyz[2] / config.camera_parameters_[0].fy;
+		if(trans_xyz.norm() <1.0){
+
+			std::cout << "whoopsie\n";
+			std::cout <<  meas[0] << "  " << meas[1] << " " << meas[2]  << "\n";
+		}
 		if (trans_xyz[2] > config.stereo_init_max_depth || trans_xyz[2] < 0 || trans_xyz[2] != trans_xyz[2])
 		{
 			return false;
