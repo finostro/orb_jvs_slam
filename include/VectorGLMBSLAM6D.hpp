@@ -190,7 +190,8 @@ void print_map(const MapType & m)
 		static constexpr double a = std::log(1.0/8.0);
 		static constexpr double b = std::log(7.0/8.0);
 		static constexpr double c = std::log(1.0/2.0);
-		return 1;// 20*(d*a+(1-d)*b+c);
+		double ret =14.0+20.0*(dd*a+(1-dd)*b+c);
+		return  ret;
 	}
 
 	/**
@@ -364,6 +365,8 @@ void print_map(const MapType & m)
 		 * @param ni number of iterations of the optimizer
 		 */
 		void sampleComponents();
+
+		void perturbTraj(VectorGLMBComponent6D &c);
 		/**
 		 * Computes the stereo matches in the orb measurements stored in c
 		 * @param pose an orbslam pose with keypoints and descriptors
@@ -853,8 +856,12 @@ void print_map(const MapType & m)
 
 			// add data association j to component i
 			changeDA(components_[i], it->first);
-			for(int numpose = 0 ; numpose < components_[i].poses_.size() ; numpose++){
+			for(int numpose = 1 ; numpose < components_[i].poses_.size() ; numpose++){
+
+
 				components_[i].poses_[numpose].pPose->setEstimate(it->second.trajectory[numpose]);
+				
+
 			}
 			components_[i].logweight_ = it->second.weight;
 
@@ -1487,6 +1494,24 @@ void print_map(const MapType & m)
 		}
 	}
 
+	void VectorGLMBSLAM6D::perturbTraj(VectorGLMBComponent6D &c){
+		int threadnum = 0;
+#ifdef _OPENMP
+		threadnum = omp_get_thread_num();
+#endif
+		for(int k = minpose_+1 ; k<maxpose_ ; k++){
+			auto p_v = c.poses_[k].pPose->estimate().toMinimalVector();
+			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
+			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
+			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
+			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
+			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
+			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
+			g2o::SE3Quat pos(p_v);
+			c.poses_[k].pPose->setEstimate(pos);
+		}
+	}
+
 	void VectorGLMBSLAM6D::selectNN(VectorGLMBComponent6D &c)
 	{
 		std::vector<boost::bimap<int, int, boost::container::allocator<int>>> out;
@@ -1836,6 +1861,7 @@ void print_map(const MapType & m)
 			//c.optimizer_->save("initial.g2o");
 			int niterations = c.optimizer_->optimize(ni);
 			assert(niterations > 0);
+			perturbTraj(c);
 			//std::cout  << "optimized \n";
 			//c.optimizer_->save("01.g2o");
 			checkGraph(c);
@@ -2741,7 +2767,7 @@ void print_map(const MapType & m)
 					if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
 												config.viewingCosLimit_, config.g2o_cam_params))
 					{
-						if (c.landmarks_[lm].numDetections_ >0 || c.landmarks_[lm].birthTime_ > c.poses_[k].stamp){
+						if (c.landmarks_[lm].numDetections_ >0 || c.landmarks_[lm].birthTime_ < c.poses_[k].stamp){
 							c.poses_[k].fov_.push_back(c.landmarks_[lm].pPoint->id());
 							c.landmarks_[lm].numFoV_++;
 							c.landmarks_[lm].is_in_fov_.push_back(k);
@@ -2788,7 +2814,7 @@ void print_map(const MapType & m)
 					int dist = descriptorDistance(c.poses_[k].descriptors_left.row(c.poses_[k].matches_left_to_right[nz].queryIdx),
 					lm.descriptor);
 
-					if (dist < 50){
+					if (dist < 80){
 						c.DAProbs_[k][nz].i.push_back(lmidx); 
 					}
 					
