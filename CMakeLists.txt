@@ -53,8 +53,10 @@ catkin_package(
 
 
 
+# For cmake custom library searches
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
-
+MESSAGE("adding path to cmake ${CMAKE_CURRENT_SOURCE_DIR}/cmake " )
 # choose latest opengl
 set(OpenGL_GL_PREFERENCE GLVND)
 # Compiler settings
@@ -123,7 +125,7 @@ endif()
 FIND_PACKAGE(Perftools)
 IF(Perftools_FOUND)
   IF("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-    SET(USE_CPU_PROFILER OFF CACHE BOOL "Use Google Perftools for CPU profiling.")
+    SET(USE_CPU_PROFILER ON CACHE BOOL "Use Google Perftools for CPU profiling.")
     SET(USE_HEAP_PROFILER OFF CACHE BOOL "Use Google Perftools for heap profiling.")
   ELSE()
     SET(USE_CPU_PROFILER OFF) # Does not play nice with Clang
@@ -172,8 +174,6 @@ set(Boost_USE_STATIC_LIBS ON)
 set(Boost_USE_MULTITHREADED ON) 
 set(Boost_USE_STATIC_RUNTIME ON)
 
-# For cmake custom library searches
-list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Eigen
 FIND_PACKAGE(Eigen REQUIRED)
@@ -247,8 +247,8 @@ ADD_EXECUTABLE(vglmbslam6d src/vglmbslam6d_euroc.cpp  src/external/ORBextractor.
 
 
 
-TARGET_LINK_LIBRARIES(vglmbslam6d  yaml-cpp  ${Boost_LIBRARIES} rfsslam ${CERES_LIBRARIES} ${CSPARSE_LIBRARY} g2o_core g2o_csparse_extension g2o_solver_csparse g2o_types_slam3d g2o_types_sba g2o_types_sim3  g2o_stuff  ${Perftools_PROFILER_LIBRARY} ${Perftools_TCMALLOC_LIBRARY} 
-${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES} gtsam )
+TARGET_LINK_LIBRARIES(vglmbslam6d  yaml-cpp  ${Boost_LIBRARIES} rfsslam ${CERES_LIBRARIES} ${CSPARSE_LIBRARY} g2o_core g2o_csparse_extension g2o_solver_csparse g2o_types_slam3d g2o_types_sba g2o_types_sim3  g2o_stuff  
+${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES} gtsam ${Perftools_PROFILER_LIBRARY} ${Perftools_TCMALLOC_LIBRARY}  )
 
 
 # ADD_EXECUTABLE(hglmbslam6d src/vglmbslam6d_euroc_gtsam.cpp  src/external/ORBextractor.cc src/external/Converter.cc)

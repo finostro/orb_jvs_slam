@@ -591,14 +591,14 @@ void print_map(const MapType & m)
 		transformStamped.header.frame_id = "map";
 		transformStamped.child_frame_id = "camera";
 
-		transformStamped.transform.translation.x = c.poses_[c.maxpose_].pPose->estimate().inverse().translation()[0];
-		transformStamped.transform.translation.y = c.poses_[c.maxpose_].pPose->estimate().inverse().translation()[1];
-		transformStamped.transform.translation.z = c.poses_[c.maxpose_].pPose->estimate().inverse().translation()[2];
+		transformStamped.transform.translation.x = c.poses_[c.maxpose_-1].pPose->estimate().inverse().translation()[0];
+		transformStamped.transform.translation.y = c.poses_[c.maxpose_-1].pPose->estimate().inverse().translation()[1];
+		transformStamped.transform.translation.z = c.poses_[c.maxpose_-1].pPose->estimate().inverse().translation()[2];
 
-		transformStamped.transform.rotation.x = c.poses_[c.maxpose_].pPose->estimate().inverse().rotation().x();
-		transformStamped.transform.rotation.y = c.poses_[c.maxpose_].pPose->estimate().inverse().rotation().y();
-		transformStamped.transform.rotation.z = c.poses_[c.maxpose_].pPose->estimate().inverse().rotation().z();
-		transformStamped.transform.rotation.w = c.poses_[c.maxpose_].pPose->estimate().inverse().rotation().w();
+		transformStamped.transform.rotation.x = c.poses_[c.maxpose_-1].pPose->estimate().inverse().rotation().x();
+		transformStamped.transform.rotation.y = c.poses_[c.maxpose_-1].pPose->estimate().inverse().rotation().y();
+		transformStamped.transform.rotation.z = c.poses_[c.maxpose_-1].pPose->estimate().inverse().rotation().z();
+		transformStamped.transform.rotation.w = c.poses_[c.maxpose_-1].pPose->estimate().inverse().rotation().w();
 
 		br.sendTransform(transformStamped);
 
@@ -799,7 +799,7 @@ void print_map(const MapType & m)
 			c.poses_[i].pPose->setFixed(true);
 		}
 		c.optimizer_->initializeOptimization();
-		c.optimizer_->computeInitialGuess();
+		//c.optimizer_->computeInitialGuess();
 		c.optimizer_->setVerbose(false);
 		if (!c.optimizer_->verifyInformationMatrices(true)){
 			std::cerr << "info is bad\n";
@@ -1179,11 +1179,18 @@ void print_map(const MapType & m)
 				}
 			}
 		}
+		sort(pose.matches_left_to_right.begin() , pose.matches_left_to_right.end() );
+
 
 		sort(vDistIdx.begin(), vDistIdx.end());
+
 		const float median = vDistIdx[vDistIdx.size() / 2].first;
 		const float thDist = 1.5f * 1.4f * median;
 
+		cv::DMatch thres(0, 0, thDist);
+		auto it = std::lower_bound(pose.matches_left_to_right.begin() , pose.matches_left_to_right.end() , thres );
+		pose.matches_left_to_right.resize((it-pose.matches_left_to_right.begin()));
+	
 		for (int i = vDistIdx.size() - 1; i >= 0; i--)
 		{
 			if (vDistIdx[i].first < thDist)
@@ -1426,7 +1433,7 @@ void print_map(const MapType & m)
 			// optimize once at the start to calculate the hessian.
 			c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
-			c.optimizer_->computeInitialGuess();
+			//c.optimizer_->computeInitialGuess();
 			c.optimizer_->setVerbose(false);
 			std::string filename = std::string("init") + std::to_string(i++) + ".g2o";
 			c.optimizer_->save(filename.c_str(), 0);
@@ -1502,7 +1509,7 @@ void print_map(const MapType & m)
 				c.poses_[i].pPose->setFixed(true);
 			}
 			c.optimizer_->initializeOptimization();
-			c.optimizer_->computeInitialGuess();
+			//c.optimizer_->computeInitialGuess();
 			c.optimizer_->setVerbose(false);
 			if (!c.optimizer_->verifyInformationMatrices(true)){
 				std::cerr << "info is bad\n";
@@ -1718,7 +1725,7 @@ void print_map(const MapType & m)
 						c.poses_[k].pPose->setFixed(true);
 					}
 					c.optimizer_->initializeOptimization();
-					c.optimizer_->computeInitialGuess();
+					//c.optimizer_->computeInitialGuess();
 					c.optimizer_->setVerbose(false);
 					if (!c.optimizer_->verifyInformationMatrices(true)){
 						std::cerr << "info is bad\n";
@@ -1742,7 +1749,7 @@ void print_map(const MapType & m)
 						c.poses_[k].pPose->setFixed(true);
 					}
 					c.optimizer_->initializeOptimization();
-					c.optimizer_->computeInitialGuess();
+					//c.optimizer_->computeInitialGuess();
 					c.optimizer_->setVerbose(false);
 					if (!c.optimizer_->verifyInformationMatrices(true)){
 						std::cerr << "info is bad\n";
@@ -1818,11 +1825,12 @@ void print_map(const MapType & m)
 			updateGraph(c);
 			moveBirth(c);
 			checkGraph(c);
-			for(int k=0; k< c.maxpose_ && k < 1 ; k++){
-				c.poses_[k].pPose->setFixed(true);
-			}
+			// for(int k=0; k< minpose_ ; k++){
+			// 	c.poses_[k].pPose->setFixed(true);
+			// }
+			c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
-			c.optimizer_->computeInitialGuess();
+			//c.optimizer_->computeInitialGuess();
 			c.optimizer_->setVerbose(false);
 			//std::cout  << "optimizing \n";
 			//c.optimizer_->save("initial.g2o");
@@ -1948,7 +1956,7 @@ void print_map(const MapType & m)
 			}
 			c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
-			c.optimizer_->computeInitialGuess();
+			//c.optimizer_->computeInitialGuess();
 			c.optimizer_->setVerbose(false);
 			if (!c.optimizer_->verifyInformationMatrices(true)){
 				std::cerr << "info is bad\n";
@@ -3224,11 +3232,8 @@ void print_map(const MapType & m)
 		trans_xyz[2] = config.stereo_baseline_f / (meas[0] - meas[2]);
 		trans_xyz[0] = (meas[0] - config.camera_parameters_[0].cx) * trans_xyz[2] / config.camera_parameters_[0].fx;
 		trans_xyz[1] = (meas[1] - config.camera_parameters_[0].cy) * trans_xyz[2] / config.camera_parameters_[0].fy;
-		if(trans_xyz.norm() <1.0){
 
-			std::cout << "whoopsie\n";
-			std::cout <<  meas[0] << "  " << meas[1] << " " << meas[2]  << "\n";
-		}
+
 		if (trans_xyz[2] > config.stereo_init_max_depth || trans_xyz[2] < 0 || trans_xyz[2] != trans_xyz[2])
 		{
 			return false;

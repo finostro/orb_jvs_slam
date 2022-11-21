@@ -3,22 +3,22 @@ MeasurementLikelihoodThreshold:  100.0
 
 lmExistenceProb: 0.01
 
-minframe: 30
-maxframe: 60
+minframe: 60
+maxframe: 500
 
-PE: 0.01
-PD: 0.5
-numIterations: 100
-numGibbs: 10
+PE: 0.001
+PD: 0.6
+numIterations: 500
+numGibbs: 12
 numLandmarks: 100
-numComponents: 12
+numComponents: 10
 maxRange: 5
 numLevenbergIterations: 5
 tempFactor: 0.995
 initTemp: 1
 birthDeathNumIter: 500
 crossoverNumIter: 13300 
-numPosesToOptimize: 40
+numPosesToOptimize: 10
 
 finalStateFile: optimizedState.g2o
 xlim : [-20.0 , 20.0 ]
@@ -33,19 +33,19 @@ anchorInfo:
 odomInfo:
     rows: 6
     cols: 6
-    data: [500 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 500 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 500 , 0.0 , 0.0 , 0.0 ,
+    data: [5000 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 5000 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 5000 , 0.0 , 0.0 , 0.0 ,
     0.0 , 0.0 , 0.0 , 1 , 0.0 , 0.0 ,
     0.0 , 0.0 , 0.0 , 0.0 , 1 , 0.0 ,
     0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 1 ]
 stereoInfo:
     rows: 3
     cols: 3
-    data: [2.0 , 0.0 , 0.0 ,
-    0.0 , 2.0 , 0.0 ,
-    0.0 , 0.0 , 2.00 ]
-logKappa: -80.0
+    data: [3 , 0.0 , 0.0 ,
+    0.0 , 3 , 0.0 ,
+    0.0 , 0.0 , 3 ]
+logKappa: -40.0
 
 
 viewingCosLimit: 0.5
@@ -104,7 +104,7 @@ camera_params:
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-ORBextractor.nFeatures: 80
+ORBextractor.nFeatures: 10
 
 # ORB Extractor: Scale factor between levels in the scale pyramid 	
 ORBextractor.scaleFactor: 1.2
