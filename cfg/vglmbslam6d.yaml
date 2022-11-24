@@ -3,7 +3,7 @@ MeasurementLikelihoodThreshold:  100.0
 
 lmExistenceProb: 0.01
 
-minframe: 60
+minframe: 00
 maxframe: 2500
 
 PE: 0.0001
@@ -11,7 +11,7 @@ PD: 0.7
 numIterations: 2500
 numGibbs: 16
 numLandmarks: 100
-numComponents: 12
+numComponents: 16
 maxRange: 5
 numLevenbergIterations: 15
 tempFactor: 0.995
