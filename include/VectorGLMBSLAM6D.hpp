@@ -2053,6 +2053,15 @@ void print_map(const MapType & m)
 								  << termcolor::reset;
 						publishMarkers(c);
 					}
+
+					for (auto i = visited_.begin(), last = visited_.end(); i != last; ) {
+					if (i->second.weight < bestWeight_-200 ) {
+						i = visited_.erase(i);
+					} else {
+						++i;
+					}
+					}
+					
 				}
 			}
 			// double accept = std::min(1.0 ,  std::exp(c.logweight_-c.prevLogWeight_ - std::min(expectedChange, 0.0) ));
