@@ -132,7 +132,7 @@ namespace rfs
 		std::string line;
 		double t;
 		g2o::SE3Quat pose;
-		while (!file.eof()){
+		while (file.good() && !file.eof()){
 			//std::cout << "read line\n";
 			file >> t;
 			Eigen::Vector3d t;
@@ -1499,14 +1499,14 @@ void print_map(const MapType & m)
 #ifdef _OPENMP
 		threadnum = omp_get_thread_num();
 #endif
-		for(int k = minpose_+1 ; k<maxpose_ ; k++){
-			auto p_v = c.poses_[k].pPose->estimate().toMinimalVector();
-			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
-			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
-			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
-			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
-			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
-			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
+		for(int k = minpose_+1 ; k<maxpose_ -1; k++){
+			g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
+			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.005;
+			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.005;
+			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.005;
+			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.01;
+			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.01;
+			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.01;
 			g2o::SE3Quat pos(p_v);
 			c.poses_[k].pPose->setEstimate(pos);
 		}
