@@ -36,6 +36,7 @@
 
 #include "g2o/types/sba/types_six_dof_expmap.h" // se3 poses
 #include <opencv2/core/core.hpp>
+#include <ORB.hpp>
 
 namespace rfs
 {
@@ -69,7 +70,7 @@ namespace rfs
         Eigen::Vector3d normalVector;
 
         // Best descriptor to fast matching
-        cv::Mat descriptor;
+        ORBDescriptor descriptor;
 
         // Scale invariance distances
         float mfMinDistance;
@@ -80,6 +81,8 @@ namespace rfs
 
 
         int predictScale(double dist, OrbslamPose *pPose);
+
+        
 
 
 

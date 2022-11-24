@@ -108,8 +108,8 @@ OrbslamPose::OrbslamPose(const OrbslamPose &other): mnScaleLevels(other.mnScaleL
 	if (other.pPose){
 		pPose = new PoseType(*other.pPose);
 	}
-	descriptors_left = other.descriptors_left.clone();
-	descriptors_right = other.descriptors_right.clone();
+	descriptors_left = other.descriptors_left;
+	descriptors_right = other.descriptors_right;
 
 }
 

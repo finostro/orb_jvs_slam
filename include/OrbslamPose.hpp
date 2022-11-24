@@ -34,6 +34,7 @@
 #include <opencv2/core/core.hpp>
 #include <vector>
 #include <external/ORBextractor.h>
+#include <ORB.hpp>
 
 namespace rfs
 {
@@ -72,7 +73,7 @@ namespace rfs
         // keypoints detected
         std::vector<cv::KeyPoint> keypoints_left, keypoints_right;
 
-        cv::Mat descriptors_left, descriptors_right;
+        std::vector< ORBDescriptor>  descriptors_left, descriptors_right;
 
         std::vector<float> uRight;
         std::vector<float> depth;

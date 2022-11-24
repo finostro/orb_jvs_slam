@@ -4,21 +4,21 @@ MeasurementLikelihoodThreshold:  100.0
 lmExistenceProb: 0.01
 
 minframe: 60
-maxframe: 500
+maxframe: 2500
 
 PE: 0.0001
-PD: 0.9
-numIterations: 100
-numGibbs: 12
+PD: 0.7
+numIterations: 2500
+numGibbs: 16
 numLandmarks: 100
 numComponents: 12
 maxRange: 5
 numLevenbergIterations: 15
 tempFactor: 0.995
 initTemp: 1
-birthDeathNumIter: 500
+birthDeathNumIter: 2
 crossoverNumIter: 13300 
-numPosesToOptimize: 20
+numPosesToOptimize: 40
 
 finalStateFile: optimizedState.g2o
 xlim : [-20.0 , 20.0 ]
@@ -33,18 +33,18 @@ anchorInfo:
 odomInfo:
     rows: 6
     cols: 6
-    data: [10000 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 10000 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 10000 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 1 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 0.0 , 1 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 1 ]
+    data: [100000 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 100000 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 100000 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 10 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 0.0 , 10 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 10 ]
 stereoInfo:
     rows: 3
     cols: 3
-    data: [0.5 , 0.0 , 0.0 ,
-    0.0 , 0.5 , 0.0 ,
-    0.0 , 0.0 , 0.5 ]
+    data: [1.5 , 0.0 , 0.0 ,
+    0.0 , 1.5 , 0.0 ,
+    0.0 , 0.0 , 1.5 ]
 logKappa: -50.0
 
 

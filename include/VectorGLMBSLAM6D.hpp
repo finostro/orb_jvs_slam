@@ -366,6 +366,7 @@ void print_map(const MapType & m)
 		 */
 		void sampleComponents();
 
+		void updateDescriptors(VectorGLMBComponent6D &c);
 		void perturbTraj(VectorGLMBComponent6D &c);
 		/**
 		 * Computes the stereo matches in the orb measurements stored in c
@@ -967,17 +968,27 @@ void print_map(const MapType & m)
 			//				&vLapping_right);
 			//		threadLeft.join();
 			//		threadRight.join();
-
+			cv::Mat desc_left , desc_right;
 			ORB_SLAM3::ORBextractor::extract(mpORBextractorLeft,
 											 &imLeft_rect, &mask_left,
 											 &initial_component_.poses_[ni].keypoints_left,
-											 &initial_component_.poses_[ni].descriptors_left,
+											 &desc_left,
 											 &vLapping_left);
 			ORB_SLAM3::ORBextractor::extract(mpORBextractorRight,
 											 &imRight_rect, &mask_right,
 											 &initial_component_.poses_[ni].keypoints_right,
-											 &initial_component_.poses_[ni].descriptors_right,
+											 &desc_right,
 											 &vLapping_right);
+			
+			
+			initial_component_.poses_[ni].descriptors_left.resize(initial_component_.poses_[ni].keypoints_left.size());
+			for (int nk=0; nk<initial_component_.poses_[ni].keypoints_left.size() ;nk++){
+				initial_component_.poses_[ni].descriptors_left[nk].from_mat(desc_left.row(nk));
+			}
+			initial_component_.poses_[ni].descriptors_right.resize(initial_component_.poses_[ni].keypoints_right.size());
+			for (int nk=0; nk<initial_component_.poses_[ni].keypoints_right.size() ;nk++){
+				initial_component_.poses_[ni].descriptors_right[nk].from_mat(desc_right.row(nk));
+			}
 			computeStereoMatches(initial_component_.poses_[ni]);
 
 			initial_component_.numPoints_ += initial_component_.poses_[ni].matches_left_to_right.size();
@@ -1077,7 +1088,7 @@ void print_map(const MapType & m)
 			int bestDist = orb_th_high;
 			size_t bestIdxR = 0;
 
-			const cv::Mat &dL = pose.descriptors_left.row(iL);
+			const auto &dL = pose.descriptors_left[iL];
 
 			// Compare descriptor to right keypoints
 			for (size_t iC = 0; iC < vCandidates.size(); iC++)
@@ -1092,8 +1103,8 @@ void print_map(const MapType & m)
 
 				if (uR >= minU && uR <= maxU)
 				{
-					const cv::Mat &dR = pose.descriptors_right.row(iR);
-					const int dist = descriptorDistance(dL, dR);
+					const auto &dR = pose.descriptors_right[iR];
+					const int dist = ORBDescriptor::distance(dL,dR);
 
 					if (dist < bestDist)
 					{
@@ -1494,19 +1505,24 @@ void print_map(const MapType & m)
 		}
 	}
 
+	void VectorGLMBSLAM6D::updateDescriptors(VectorGLMBComponent6D &c){
+		
+	}
 	void VectorGLMBSLAM6D::perturbTraj(VectorGLMBComponent6D &c){
 		int threadnum = 0;
 #ifdef _OPENMP
 		threadnum = omp_get_thread_num();
 #endif
-		for(int k = minpose_+1 ; k<maxpose_ -1; k++){
-			g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
-			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.005;
-			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.005;
-			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.005;
-			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.01;
-			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.01;
-			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.01;
+		for(int k = minpose_+1 ; k<maxpose_ ; k++){
+			//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
+			g2o::Vector6 p_v = c.poses_[k].pPose->estimate().toMinimalVector();
+
+			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0005;
+			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0005;
+			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0005;
+			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
+			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
+			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
 			g2o::SE3Quat pos(p_v);
 			c.poses_[k].pPose->setEstimate(pos);
 		}
@@ -1717,126 +1733,126 @@ void print_map(const MapType & m)
 			std::cout << "sampling compos \n";
 		}
 
-		if (iteration_ % config.crossoverNumIter_ == 0 and false)
-		{
+// 		if (iteration_ % config.crossoverNumIter_ == 0 and false)
+// 		{
 
-			std::cout << termcolor::magenta
-					  << " =========== SexyTime!============\n"
-					  << termcolor::reset;
-			for (int i = 0; i < components_.size(); i++)
-			{
-				auto &c = components_[i];
-				c.maxpose_ = maxpose_;
+// 			std::cout << termcolor::magenta
+// 					  << " =========== SexyTime!============\n"
+// 					  << termcolor::reset;
+// 			for (int i = 0; i < components_.size(); i++)
+// 			{
+// 				auto &c = components_[i];
+// 				c.maxpose_ = maxpose_;
 
-				boost::uniform_int<> random_component(0, components_.size() - 1);
-				int secondComp;
-				do
-				{
-					secondComp = random_component(rfs::randomGenerators_[0]);
-				} while (secondComp == i);
-				auto da = sexyTime(c, components_[secondComp]);
-				changeDA(c, da);
-			}
-#pragma omp parallel for
-			for (int i = 0; i < components_.size(); i++)
-			{
+// 				boost::uniform_int<> random_component(0, components_.size() - 1);
+// 				int secondComp;
+// 				do
+// 				{
+// 					secondComp = random_component(rfs::randomGenerators_[0]);
+// 				} while (secondComp == i);
+// 				auto da = sexyTime(c, components_[secondComp]);
+// 				changeDA(c, da);
+// 			}
+// #pragma omp parallel for
+// 			for (int i = 0; i < components_.size(); i++)
+// 			{
 
-				if (maxpose_prev_ != maxpose_)
-				{
-					auto &c = components_[i];
-					selectNN( c);
-					updateGraph(c);
-					for(int k=0; k< c.maxpose_ && k < 1 ; k++){
-						c.poses_[k].pPose->setFixed(true);
-					}
-					c.optimizer_->initializeOptimization();
-					//c.optimizer_->computeInitialGuess();
-					c.optimizer_->setVerbose(false);
-					if (!c.optimizer_->verifyInformationMatrices(true)){
-						std::cerr << "info is bad\n";
-					}
-					int niterations = c.optimizer_->optimize(ni);
-					assert(niterations > 0);
+// 				if (maxpose_prev_ != maxpose_)
+// 				{
+// 					auto &c = components_[i];
+// 					selectNN( c);
+// 					updateGraph(c);
+// 					for(int k=0; k< c.maxpose_ && k < 1 ; k++){
+// 						c.poses_[k].pPose->setFixed(true);
+// 					}
+// 					c.optimizer_->initializeOptimization();
+// 					//c.optimizer_->computeInitialGuess();
+// 					c.optimizer_->setVerbose(false);
+// 					if (!c.optimizer_->verifyInformationMatrices(true)){
+// 						std::cerr << "info is bad\n";
+// 					}
+// 					int niterations = c.optimizer_->optimize(ni);
+// 					assert(niterations > 0);
 
-					updateFoV(c);
-					// std::cout << "fov update: \n";
+// 					updateFoV(c);
+// 					// std::cout << "fov update: \n";
 
-					moveBirth(c);
-					updateDAProbs(c, minpose_, maxpose_);
-					// std::cout << "da update: \n";
-					c.prevDA_bimap_ = c.DA_bimap_;
-					double expectedChange = 0;
-					bool inserted;
-					selectNN(c);
-					//	std::cout << "nn update: \n";
-					//updateGraph(c);
-					for(int k=0; k< c.maxpose_ && k < 1 ; k++){
-						c.poses_[k].pPose->setFixed(true);
-					}
-					c.optimizer_->initializeOptimization();
-					//c.optimizer_->computeInitialGuess();
-					c.optimizer_->setVerbose(false);
-					if (!c.optimizer_->verifyInformationMatrices(true)){
-						std::cerr << "info is bad\n";
-					}
-					niterations = c.optimizer_->optimize(ni);
-					assert(niterations > 0);
-					calculateWeight(c);
+// 					moveBirth(c);
+// 					updateDAProbs(c, minpose_, maxpose_);
+// 					// std::cout << "da update: \n";
+// 					c.prevDA_bimap_ = c.DA_bimap_;
+// 					double expectedChange = 0;
+// 					bool inserted;
+// 					selectNN(c);
+// 					//	std::cout << "nn update: \n";
+// 					//updateGraph(c);
+// 					for(int k=0; k< c.maxpose_ && k < 1 ; k++){
+// 						c.poses_[k].pPose->setFixed(true);
+// 					}
+// 					c.optimizer_->initializeOptimization();
+// 					//c.optimizer_->computeInitialGuess();
+// 					c.optimizer_->setVerbose(false);
+// 					if (!c.optimizer_->verifyInformationMatrices(true)){
+// 						std::cerr << "info is bad\n";
+// 					}
+// 					niterations = c.optimizer_->optimize(ni);
+// 					assert(niterations > 0);
+// 					calculateWeight(c);
 
-					std::map<
-					std::vector<boost::bimap<int, int, boost::container::allocator<int>>>,
-					TrajectoryWeight>::iterator it;
-					#pragma omp critical(bestweight)
-					{
-						if (c.logweight_ > bestWeight_)
-						{
-							bestWeight_ = c.logweight_;
-							best_DA_ = c.DA_bimap_;
-							best_DA_max_detection_time_ = maxpose_ - 1;
-							while (best_DA_max_detection_time_ > 0 && best_DA_[best_DA_max_detection_time_].size() == 0)
-							{
-								best_DA_max_detection_time_--;
-							}
-							std::stringstream filename;
+// 					std::map<
+// 					std::vector<boost::bimap<int, int, boost::container::allocator<int>>>,
+// 					TrajectoryWeight>::iterator it;
+// 					#pragma omp critical(bestweight)
+// 					{
+// 						if (c.logweight_ > bestWeight_)
+// 						{
+// 							bestWeight_ = c.logweight_;
+// 							best_DA_ = c.DA_bimap_;
+// 							best_DA_max_detection_time_ = maxpose_ - 1;
+// 							while (best_DA_max_detection_time_ > 0 && best_DA_[best_DA_max_detection_time_].size() == 0)
+// 							{
+// 								best_DA_max_detection_time_--;
+// 							}
+// 							std::stringstream filename;
 
-							filename << "video/beststate_" << std::setfill('0')
-									 << std::setw(5) << iterationBest_++ << ".g2o";
-							c.optimizer_->save(filename.str().c_str(), 0);
-							std::cout << termcolor::yellow << "========== newbest:"
-									  << bestWeight_ << " ============\n"
-									  << termcolor::reset;
-							//printDA(c);
-							if (config.use_gui_)
-							{
-								std::cout << termcolor::yellow << "========== piblishingmarkers:"
-										  << bestWeight_ << " ============\n"
-										  << termcolor::reset;
-								publishMarkers(c);
-							}
-						}
-					}
-					TrajectoryWeight to_insert;
-					to_insert.weight = c.logweight_;
-					to_insert.trajectory.resize(c.poses_.size() );
-					for(int numpose =0; numpose< maxpose_; numpose++){
-						to_insert.trajectory[numpose]=c.poses_[numpose].pPose->estimate();
-					}
-					for(int numpose = maxpose_; numpose< c.poses_.size(); numpose++){
-						to_insert.trajectory[numpose]=c.poses_[maxpose_-1].pPose->estimate();
-					}
+// 							filename << "video/beststate_" << std::setfill('0')
+// 									 << std::setw(5) << iterationBest_++ << ".g2o";
+// 							c.optimizer_->save(filename.str().c_str(), 0);
+// 							std::cout << termcolor::yellow << "========== newbest:"
+// 									  << bestWeight_ << " ============\n"
+// 									  << termcolor::reset;
+// 							//printDA(c);
+// 							if (config.use_gui_)
+// 							{
+// 								std::cout << termcolor::yellow << "========== piblishingmarkers:"
+// 										  << bestWeight_ << " ============\n"
+// 										  << termcolor::reset;
+// 								publishMarkers(c);
+// 							}
+// 						}
+// 					}
+// 					TrajectoryWeight to_insert;
+// 					to_insert.weight = c.logweight_;
+// 					to_insert.trajectory.resize(c.poses_.size() );
+// 					for(int numpose =0; numpose< maxpose_; numpose++){
+// 						to_insert.trajectory[numpose]=c.poses_[numpose].pPose->estimate();
+// 					}
+// 					for(int numpose = maxpose_; numpose< c.poses_.size(); numpose++){
+// 						to_insert.trajectory[numpose]=c.poses_[maxpose_-1].pPose->estimate();
+// 					}
 
-					auto pair = std::make_pair(c.DA_bimap_, to_insert);
-					#pragma omp critical(insert)
-					{
-						std::tie(it, inserted) = visited_.insert(pair);
-						insertionP_ = insertionP_ * 0.9;
-						if (inserted)
-							insertionP_ += 0.1;
-					}
-					//it->second = c.logweight_;
-				}
-			}
-		}
+// 					auto pair = std::make_pair(c.DA_bimap_, to_insert);
+// 					#pragma omp critical(insert)
+// 					{
+// 						std::tie(it, inserted) = visited_.insert(pair);
+// 						insertionP_ = insertionP_ * 0.9;
+// 						if (inserted)
+// 							insertionP_ += 0.1;
+// 					}
+// 					//it->second = c.logweight_;
+// 				}
+// 			}
+// 		}
 		#pragma omp parallel for
 		for (int i = 0; i < components_.size(); i++)
 		{
@@ -1864,7 +1880,7 @@ void print_map(const MapType & m)
 			perturbTraj(c);
 			//std::cout  << "optimized \n";
 			//c.optimizer_->save("01.g2o");
-			checkGraph(c);
+			updateMetaStates(c);
 
 			moveBirth(c);
 			checkGraph(c);
@@ -1892,9 +1908,9 @@ void print_map(const MapType & m)
 
 			{
 				// do{
-				checkGraph(c);
-				selectNN(c);
-				checkGraph(c);
+				// checkGraph(c);
+				// selectNN(c);
+				// checkGraph(c);
 				expectedChange += sampleDA(c);
 				/*
 				 std::cout << termcolor::magenta <<" =========== SexyTime!============\n" << termcolor::reset;
@@ -1911,14 +1927,14 @@ void print_map(const MapType & m)
 					switch ((iteration_ / config.birthDeathNumIter_) % 3)
 					{
 					case 0:
-						//expectedChange += sampleLMBirth(c);
+						 expectedChange += sampleLMDeath(c);
 						break;
 					case 1:
-						// expectedChange += sampleLMDeath(c);
+						 expectedChange += sampleLMDeath(c);
 						break;
 
 					case 2:
-						//
+						 expectedChange += sampleLMDeath(c);
 						break;
 					}
 				}
@@ -1947,13 +1963,7 @@ void print_map(const MapType & m)
 				to_insert.trajectory[numpose]=c.poses_[maxpose_-1].pPose->estimate();
 			}
 			auto pair = std::make_pair(c.DA_bimap_, to_insert);
-#pragma omp critical(insert)
-			{
-				std::tie(it, inserted) = visited_.insert(pair);
-				insertionP_ = insertionP_ * 0.99;
-				if (inserted)
-					insertionP_ += 0.01;
-			}
+
 
 			/*
 			 if (!inserted) {
@@ -1998,9 +2008,20 @@ void print_map(const MapType & m)
 							  << termcolor::reset;
 			
 			checkGraph(c);
+			#pragma omp critical(insert)
+			{
+			}
 
 			#pragma omp critical(bestweight)
 			{
+				if (c.logweight_ > bestWeight_-200){
+					std::tie(it, inserted) = visited_.insert(pair);
+					insertionP_ = insertionP_ * 0.99;
+					if (inserted){
+						insertionP_ += 0.01;
+						it->second.weight = c.logweight_;
+					}
+				}
 				if (c.logweight_ > bestWeight_)
 				{
 					bestWeight_ = c.logweight_;
@@ -2034,7 +2055,6 @@ void print_map(const MapType & m)
 					}
 				}
 			}
-			it->second.weight = c.logweight_;
 			// double accept = std::min(1.0 ,  std::exp(c.logweight_-c.prevLogWeight_ - std::min(expectedChange, 0.0) ));
 
 			/*
@@ -2491,8 +2511,10 @@ void print_map(const MapType & m)
 			}
 
 			c.landmarksResetProb_[i] = -(c.landmarks_[i].numDetections_) * std::log(config.PD_) - (c.landmarks_[i].numFoV_ - c.landmarks_[i].numDetections_) * std::log(1 - config.PD_) - std::log(config.PE_) + std::log(1 - config.PE_);
+			c.landmarksResetProb_[i] = (c.landmarks_[i].numFoV_*std::log(config.PD_) - c.landmarks_[i].numDetections_)/c.landmarks_[i].numFoV_*std::log(config.PD_);
+			
 			double p = std::exp(c.landmarksResetProb_[i]);
-			if (uni_dist(randomGenerators_[threadnum]) < p / (1 + p))
+			if (uni_dist(randomGenerators_[threadnum]) > c.landmarksResetProb_[i] )
 			{
 				/*
 				 c.landmarksResetProb_[i] = (1-((double)c.landmarks_[i]numDetections_)/c.landmarks_[i].numFoV_)*(config.PD_);
@@ -2500,7 +2522,7 @@ void print_map(const MapType & m)
 				// reset all associations to false alarms
 				expectedWeightChange += config.logKappa_ * c.landmarks_[i].numDetections_;
 				int numdet = 0;
-				for (int k = minpose_; k < maxpose_; k++)
+				for (int k = 0; k < maxpose_; k++)
 				{
 					auto it = c.DA_bimap_[k].right.find(
 						c.landmarks_[i].pPoint->id());
@@ -2727,6 +2749,10 @@ void print_map(const MapType & m)
 
 				if (map_point.numDetections_ >0){
 					
+					std::vector<int> avg_desc(256);
+					map_point.normalVector.setZero();
+
+
 
 					for (auto &edge: map_point.pPoint->edges()){
 
@@ -2735,10 +2761,25 @@ void print_map(const MapType & m)
 						auto it = c.DA_bimap_[posenum].right.find(map_point.id);
 						assert ( it != c.DA_bimap_[posenum].right.end() );
 						int nz = it->second;
+						auto &desc_left = c.poses_[posenum].descriptors_left[c.poses_[posenum].matches_left_to_right[nz].queryIdx];
+						auto &desc_right = c.poses_[posenum].descriptors_left[c.poses_[posenum].matches_left_to_right[nz].trainIdx];
+						for(int i=0;i<256;i++){
+							avg_desc[i] += (int)desc_left.desc[i] + (int)desc_right.desc[i];
+						}
+						map_point.normalVector += c.poses_[posenum].point_camera_frame[nz].normalized();
 
 					}
+					for(int i=0;i<256;i++){
+						map_point.descriptor.desc[i] = avg_desc[i]>map_point.numDetections_;
+					}
+					map_point.normalVector.normalize();
+
+				}else{
+					map_point.normalVector = map_point.birthPose->point_camera_frame[map_point.birthMatch].normalized();
+					map_point.descriptor = map_point.birthPose->descriptors_left[map_point.birthMatch];
 
 				}
+
 			}
 
 		return;
@@ -2811,8 +2852,9 @@ void print_map(const MapType & m)
 				c.DAProbs_[k][nz].i.reserve(c.poses_[k].fov_.size()+1);
 				for(auto lmidx:c.poses_[k].fov_){
 					auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
-					int dist = descriptorDistance(c.poses_[k].descriptors_left.row(c.poses_[k].matches_left_to_right[nz].queryIdx),
-					lm.descriptor);
+					// int dist = descriptorDistance(c.poses_[k].descriptors_left.row(c.poses_[k].matches_left_to_right[nz].queryIdx),
+					// lm.descriptor);
+					int dist = ORBDescriptor::distance(lm.descriptor , c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
 
 					if (dist < 80){
 						c.DAProbs_[k][nz].i.push_back(lmidx); 
@@ -2861,9 +2903,8 @@ void print_map(const MapType & m)
 					{
 						auto &lm = c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id];
 
-						int dist = descriptorDistance(c.poses_[k].descriptors_left.row(c.poses_[k].matches_left_to_right[nz].queryIdx),
-					lm.descriptor);
-						c.DAProbs_[k][nz].l[a] += dist2loglikelihood(dist);
+				
+						c.DAProbs_[k][nz].l[a] += lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
 
 						c.DAProbs_[k][nz].l[a] += std::log(config.PD_) - std::log(1 - config.PD_);
 						c.poses_[k].Z_[nz]->setVertex(0, lm.pPoint);
@@ -3131,7 +3172,8 @@ void print_map(const MapType & m)
 		lm.normalVector = pose.point_camera_frame[numMatch].normalized();
 		// with only 2 descriptors (left,right) we can pick either one to represent the point
 		// allocating new
-		pose.descriptors_left.row(nl).copyTo(lm.descriptor);
+		lm.descriptor = pose.descriptors_left[nl];
+		//pose.descriptors_left.row(nl).copyTo(lm.descriptor);
 
 		point_world_frame = pose.pPose->estimate().inverse().map(pose.point_camera_frame[numMatch]);
 		lm.pPoint->setEstimate(point_world_frame);
