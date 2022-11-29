@@ -344,6 +344,14 @@ void print_map(const MapType & m)
 		void initComponents();
 
 		/**
+		 * delete  the components at end , to check we are not leaking memory
+		 */
+		void deleteComponents();
+
+		void deleteLandmarks(VectorGLMBComponent6D &c);
+		void deleteMeasurements(VectorGLMBComponent6D &c);
+
+		/**
 		 * run the optimization over the possible data associations.
 		 * @param numsteps number of iterations in algorithm.
 		 */
@@ -536,8 +544,8 @@ void print_map(const MapType & m)
 		TrajectoryWeight gt_traj;
 		double temp_;
 		int minpose_ = 0; /**< sample data association from this pose  onwards*/
-		int maxpose_ = 0; /**< optimize only up to this pose */
-		int maxpose_prev_ = 0;
+		int maxpose_ = 2; /**< optimize only up to this pose */
+		int maxpose_prev_ = 2;
 		int iteration_ = 0;
 		int iterationBest_ = 0;
 		double insertionP_ = 0.5;
@@ -608,38 +616,38 @@ void print_map(const MapType & m)
 
 		// measurements
 
-		static pcl::PointCloud<pcl::PointXYZI>::Ptr z_cloud(new pcl::PointCloud<pcl::PointXYZI>);
-		z_cloud->height = 1;
-		z_cloud->width = c.poses_[c.maxpose_-1].point_camera_frame.size();
-		z_cloud->is_dense = false;
-		//z_cloud->resize(c.poses_[c.maxpose_-1].point_camera_frame.size());
-		z_cloud->clear();
-		for(int k = 0 ; k <c.maxpose_ ; k++){
+		// static pcl::PointCloud<pcl::PointXYZI>::Ptr z_cloud(new pcl::PointCloud<pcl::PointXYZI>);
+		// z_cloud->height = 1;
+		// z_cloud->width = c.poses_[c.maxpose_-1].point_camera_frame.size();
+		// z_cloud->is_dense = false;
+		// //z_cloud->resize(c.poses_[c.maxpose_-1].point_camera_frame.size());
+		// z_cloud->clear();
+		// for(int k = 0 ; k <c.maxpose_ ; k++){
 
-			z_cloud->reserve(z_cloud->size()+c.poses_[k].point_camera_frame.size());
-			for (int i = 0; i < c.poses_[k].point_camera_frame.size(); i++)
-			{
-				auto point_world_frame = c.poses_[k].pPose->estimate().inverse().map(c.poses_[k].point_camera_frame[i]);
+		// 	z_cloud->reserve(z_cloud->size()+c.poses_[k].point_camera_frame.size());
+		// 	for (int i = 0; i < c.poses_[k].point_camera_frame.size(); i++)
+		// 	{
+		// 		auto point_world_frame = c.poses_[k].pPose->estimate().inverse().map(c.poses_[k].point_camera_frame[i]);
 				
-				pcl::PointXYZI point ;
-				point.x = point_world_frame[0];
-				point.y = point_world_frame[1];
-				point.z = point_world_frame[2];
-				point.intensity = k;
-				z_cloud->push_back(point);
-				//std::cout << "z: " << z_cloud->at(i).x  << " , "<< z_cloud->at(i).y  << " , "<< z_cloud->at(i).z  << " \n";
-			}
-		}
-		std::cout << "z size " << z_cloud->size() << "\n";
+		// 		pcl::PointXYZI point ;
+		// 		point.x = point_world_frame[0];
+		// 		point.y = point_world_frame[1];
+		// 		point.z = point_world_frame[2];
+		// 		point.intensity = k;
+		// 		z_cloud->push_back(point);
+		// 		//std::cout << "z: " << z_cloud->at(i).x  << " , "<< z_cloud->at(i).y  << " , "<< z_cloud->at(i).z  << " \n";
+		// 	}
+		// }
+		// std::cout << "z size " << z_cloud->size() << "\n";
 		pcl::PCLPointCloud2 pcl_debug;
-		sensor_msgs::PointCloud2 ros_debug;
-		pcl::toPCLPointCloud2(*z_cloud, pcl_debug);
-		pcl_conversions::fromPCL(pcl_debug, ros_debug);
+		// sensor_msgs::PointCloud2 ros_debug;
+		// pcl::toPCLPointCloud2(*z_cloud, pcl_debug);
+		// pcl_conversions::fromPCL(pcl_debug, ros_debug);
 
-		ros_debug.header.stamp = now;
-		ros_debug.header.frame_id = "map";
+		// ros_debug.header.stamp = now;
+		// ros_debug.header.frame_id = "map";
 
-		measurements_pub.publish(ros_debug);
+		// measurements_pub.publish(ros_debug);
 
 		// map
 
@@ -858,11 +866,10 @@ void print_map(const MapType & m)
 			// add data association j to component i
 			changeDA(components_[i], it->first);
 			for(int numpose = 1 ; numpose < components_[i].poses_.size() ; numpose++){
-
-
-				components_[i].poses_[numpose].pPose->setEstimate(it->second.trajectory[numpose]);
+				components_[i].poses_[numpose].pPose->setEstimate(it->second.trajectory[numpose]);	
 				
-
+				double dist = (it->second.trajectory[numpose].translation()-it->second.trajectory[numpose-1].translation()).norm();
+				assert (dist<0.1);
 			}
 			components_[i].logweight_ = it->second.weight;
 
@@ -951,6 +958,7 @@ void print_map(const MapType & m)
 
 			initial_component_.poses_[ni];
 			initial_component_.poses_[ni].stamp = tframe;
+			std::cout << std::setprecision(20) ;
 			std::cout << "time " << initial_component_.poses_[ni].stamp << "\n";
 			std::vector<int> vLapping_left = {0, 0};
 			std::vector<int> vLapping_right = {0, 0};
@@ -998,22 +1006,29 @@ void print_map(const MapType & m)
 			initial_component_.poses_[ni].mnMinY = 0.0f;
 			initial_component_.poses_[ni].mnMaxY = imLeft.rows;
 
+			initial_component_.poses_[ni].mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
+			// std::cout << "invsig:\n";
+			// for( auto sig: initial_component_.poses_[ni].mvInvLevelSigma2 ) {
+			// std::cout << sig << " ";
+			// }
+
+
 			// plot stereo matches
 			cv::Mat imLeftKeys, imRightKeys, imMatches;
 			cv::Scalar kpColor = cv::Scalar(255, 0, 0);
 
-			cv::drawMatches(imLeft_rect,
-							initial_component_.poses_[ni].keypoints_left, imRight_rect,
-							initial_component_.poses_[ni].keypoints_right,
-							initial_component_.poses_[ni].matches_left_to_right, imMatches);
+			// cv::drawMatches(imLeft_rect,
+			// 				initial_component_.poses_[ni].keypoints_left, imRight_rect,
+			// 				initial_component_.poses_[ni].keypoints_right,
+			// 				initial_component_.poses_[ni].matches_left_to_right, imMatches);
 
-			cv::drawKeypoints(imRight_rect,
-							  initial_component_.poses_[ni].keypoints_right, imRightKeys,
-							  kpColor);
-			cv::drawKeypoints(imLeft_rect,
-							  initial_component_.poses_[ni].keypoints_left, imLeftKeys,
-							  kpColor);
-			 cv::imshow("matches", imMatches);
+			// cv::drawKeypoints(imRight_rect,
+			// 				  initial_component_.poses_[ni].keypoints_right, imRightKeys,
+			// 				  kpColor);
+			// cv::drawKeypoints(imLeft_rect,
+			// 				  initial_component_.poses_[ni].keypoints_left, imLeftKeys,
+			// 				  kpColor);
+			//  cv::imshow("matches", imMatches);
 			 //cv::imshow("imLeft", imLeft);
 			 //cv::imshow("imLeft_rect", imLeft_rect);
 
@@ -1439,6 +1454,39 @@ void print_map(const MapType & m)
 		return point_in_camera_frame.norm();
 	}
 
+	inline void VectorGLMBSLAM6D::deleteComponents(){
+	for (auto &c : components_)
+		{
+			deleteLandmarks(c);
+			deleteMeasurements(c);
+			delete c.solverLevenberg_;
+			delete c.optimizer_;
+		}
+		components_.clear();
+	}
+	inline void VectorGLMBSLAM6D::deleteLandmarks(VectorGLMBComponent6D &c){
+		for (auto &lm: c.landmarks_ ){
+			delete lm.pPoint;
+		}
+		c.landmarks_.clear();
+
+	}
+	inline void VectorGLMBSLAM6D::deleteMeasurements(VectorGLMBComponent6D &c){
+		for(int k =0; k<c.poses_.size(); k++){
+			for(auto &z: c.poses_[k].Z_){
+				delete z;
+			}
+			delete c.poses_[k].pPose;
+			
+		}
+		for(auto odo:c.odometries_){
+			delete odo;
+		}
+		c.odometries_.clear();
+		c.poses_.clear();
+	}
+
+
 	inline void VectorGLMBSLAM6D::initComponents()
 	{
 		components_.resize(config.numComponents_);
@@ -1513,18 +1561,24 @@ void print_map(const MapType & m)
 #ifdef _OPENMP
 		threadnum = omp_get_thread_num();
 #endif
-		for(int k = minpose_+1 ; k<maxpose_ ; k++){
-			//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
-			g2o::Vector6 p_v = c.poses_[k].pPose->estimate().toMinimalVector();
 
-			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0005;
-			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0005;
-			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0005;
-			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
-			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
-			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
+		boost::uniform_real<> uni_dist(0, 1);
+		for(int k = minpose_ ; k<maxpose_ ; k++){
+			//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
+			double d = uni_dist(randomGenerators_[threadnum]);
+			g2o::Vector6 p_v;
+
+			p_v = c.poses_[k].pPose->estimate().inverse().toMinimalVector();
+	
+
+			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
+			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
+			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
+			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
+			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
+			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
 			g2o::SE3Quat pos(p_v);
-			c.poses_[k].pPose->setEstimate(pos);
+			c.poses_[k].pPose->setEstimate(pos.inverse());
 		}
 	}
 
@@ -1909,7 +1963,7 @@ void print_map(const MapType & m)
 			{
 				// do{
 				// checkGraph(c);
-				// selectNN(c);
+				 //selectNN(c);
 				// checkGraph(c);
 				expectedChange += sampleDA(c);
 				/*
@@ -1961,6 +2015,7 @@ void print_map(const MapType & m)
 			}
 			for(int numpose = maxpose_; numpose< c.poses_.size(); numpose++){
 				to_insert.trajectory[numpose]=c.poses_[maxpose_-1].pPose->estimate();
+				c.poses_[numpose].pPose->setEstimate(c.poses_[maxpose_-1].pPose->estimate());
 			}
 			auto pair = std::make_pair(c.DA_bimap_, to_insert);
 
@@ -2002,6 +2057,14 @@ void print_map(const MapType & m)
 			// std::cout <<"niterations  " <<c.optimizer_->optimize(ni) << "\n";
 			calculateWeight(c);
 
+			for ( int numpose =1 ; numpose < maxpose_; numpose++){
+				double dist = (c.poses_[numpose].pPose->estimate().translation()-c.poses_[numpose-1].pPose->estimate().translation()).norm();
+				// std::cout << "chi2 " << c.odometries_[numpose-1]->chi2() << "\n";
+				// std::cout << "globalchi2 " << c.optimizer_->activeChi2() << "\n";
+				// std::cout << "dist " << dist << "\n";
+
+				assert (dist<0.1);
+			}
 			
 			std::cout << termcolor::blue << "========== current:"
 							  <<  c.logweight_ << " ============\n"
@@ -2014,7 +2077,7 @@ void print_map(const MapType & m)
 
 			#pragma omp critical(bestweight)
 			{
-				if (c.logweight_ > bestWeight_-200){
+				if (c.logweight_ > bestWeight_-100000){
 					std::tie(it, inserted) = visited_.insert(pair);
 					insertionP_ = insertionP_ * 0.99;
 					if (inserted){
@@ -2039,6 +2102,16 @@ void print_map(const MapType & m)
 					std::cout << termcolor::yellow << "========== newbest:"
 							  << bestWeight_ << " ============\n"
 							  << termcolor::reset;
+					std::cout << "globalchi2 " << c.optimizer_->activeChi2() << "\n";
+					std::cout <<"  determinant: " << c.linearSolver_->_determinant<< "\n";
+					// for ( int numpose =1 ; numpose < maxpose_; numpose++){
+					// 	double dist = (c.poses_[numpose].pPose->estimate().translation()-c.poses_[numpose-1].pPose->estimate().translation()).norm();
+					// 	std::cout << "chi2 " << c.odometries_[numpose-1]->chi2() << "\n";
+					// 	std::cout << "globalchi2 " << c.optimizer_->activeChi2() << "\n";
+					// 	std::cout << "dist " << dist << "\n";
+
+					// 	assert (dist<0.1);
+					// }
 					//printDA(c);
 					std::stringstream name;
 					static int numbest=0;
@@ -2055,13 +2128,13 @@ void print_map(const MapType & m)
 					}
 
 					for (auto i = visited_.begin(), last = visited_.end(); i != last; ) {
-					if (i->second.weight < bestWeight_-200 ) {
+					if (i->second.weight < bestWeight_-100000 ) {
 						i = visited_.erase(i);
 					} else {
 						++i;
 					}
 					}
-					
+
 				}
 			}
 			// double accept = std::min(1.0 ,  std::exp(c.logweight_-c.prevLogWeight_ - std::min(expectedChange, 0.0) ));
@@ -2087,16 +2160,16 @@ void print_map(const MapType & m)
 
 		std::cout << "insertionp: " << insertionP_ << " temp: " << temp_ << "\n";
 
-		if (insertionP_ > 0.95 && temp_ > 5e-1)
-		{
-			temp_ *= 0.5;
-			std::cout << "reducing: \n";
-		}
-		if (insertionP_ < 0.05 && temp_ < 1e5)
-		{
-			temp_ *= 2;
-			std::cout << "augmenting: ";
-		}
+		// if (insertionP_ > 0.95 && temp_ > 5e-1)
+		// {
+		// 	temp_ *= 0.5;
+		// 	std::cout << "reducing: \n";
+		// }
+		// if (insertionP_ < 0.05 && temp_ < 1e5)
+		// {
+		// 	temp_ *= 2;
+		// 	std::cout << "augmenting: ";
+		// }
 
 		// if (config.use_gui_)
 		// {
@@ -2171,6 +2244,19 @@ void print_map(const MapType & m)
 	inline void VectorGLMBSLAM6D::updateGraph(VectorGLMBComponent6D &c)
 	{
 		checkGraph(c);
+		
+		for (int k = 0; k < maxpose_; k++)
+		{
+			if (c.optimizer_->vertex(c.poses_[k].pPose->id())==NULL){
+				c.optimizer_->addVertex(c.poses_[k].pPose);
+
+			}
+			if(k>0){
+				if (c.optimizer_->edges().find(c.odometries_[k-1]) == c.optimizer_->edges().end())
+					c.optimizer_->addEdge(c.odometries_[k-1]);
+			}
+		}
+		
 		for (int k = 0; k < maxpose_; k++)
 		{
 			int prevedges =  c.poses_[k].pPose->edges().size();
@@ -2242,7 +2328,7 @@ void print_map(const MapType & m)
 				
 			}
 			int expected_num_edges = c.DA_bimap_[k].size()+1;
-			if (k>0 && k < c.poses_.size()-1){
+			if (k>0 && k < maxpose_-1){
 				expected_num_edges++;
 			}
 			if(c.poses_[k].pPose->edges().size() !=  expected_num_edges ){
@@ -2736,6 +2822,15 @@ void print_map(const MapType & m)
 							c.tomerge_.push_back(
 								std::make_pair(probs.i[sample], selectedDA));
 						}
+						if (c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].numDetections_>0 ){
+							int kbirth = c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthPose->pPose->id();
+							
+							auto birth_it = c.DA_bimap_[kbirth].left.find(c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch);
+							if (birth_it == c.DA_bimap_[kbirth].left.end()){
+								c.DA_bimap_[kbirth].insert({c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch, probs.i[sample] });
+								c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].numDetections_++;
+							}
+						}
 					}
 					else
 					{ // if a change has to be made and new DA is false alarm, we need to remove the association
@@ -2817,7 +2912,7 @@ void print_map(const MapType & m)
 					if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
 												config.viewingCosLimit_, config.g2o_cam_params))
 					{
-						if (c.landmarks_[lm].numDetections_ >0 || c.landmarks_[lm].birthTime_ < c.poses_[k].stamp){
+						if (c.landmarks_[lm].numDetections_ >0 || (c.landmarks_[lm].birthTime_ < c.poses_[k].stamp && c.landmarks_[lm].birthTime_ >  c.poses_[k].stamp-1.0)){
 							c.poses_[k].fov_.push_back(c.landmarks_[lm].pPoint->id());
 							c.landmarks_[lm].numFoV_++;
 							c.landmarks_[lm].is_in_fov_.push_back(k);
@@ -3130,7 +3225,7 @@ void print_map(const MapType & m)
 		stereo_edge->cx = config.camera_parameters_[0].cx;
 		stereo_edge->cy = config.camera_parameters_[0].cy;
 		stereo_edge->bf = config.stereo_baseline_f;
-		stereo_edge->setInformation(config.stereoInfo_);
+		stereo_edge->setInformation(config.stereoInfo_ * pose.mvInvLevelSigma2[pose.keypoints_left[nl].octave]);
 		stereo_edge->setMeasurement(uvu);
 
 
@@ -3229,19 +3324,24 @@ void print_map(const MapType & m)
 		c.numPoses_ = initial_component_.numPoses_;
 
 		c.poses_ = initial_component_.poses_;
+		
 
 		int edgeid = c.numPoses_;
 
 		for (int k = 0; k < c.poses_.size(); k++)
 		{
 			c.poses_[k].stamp = initial_component_.poses_[k].stamp;
+			c.poses_[k].mvInvLevelSigma2 = initial_component_.poses_[k].mvInvLevelSigma2;
 			// create graph pose
 			c.poses_[k].pPose = new PoseType();
 			g2o::SE3Quat pose_estimate;
 			c.poses_[k].pPose->setEstimate(pose_estimate);
 
 			c.poses_[k].pPose->setId(k);
-			c.optimizer_->addVertex(c.poses_[k].pPose);
+			if (k < maxpose_){
+				c.optimizer_->addVertex(c.poses_[k].pPose);
+			}
+			//
 			if (k > 0)
 			{
 				OdometryEdge *odo = new OdometryEdge;
@@ -3250,10 +3350,14 @@ void print_map(const MapType & m)
 				g2o::SE3Quat q;
 				odo->setMeasurement(q);
 				odo->setInformation(config.odomInfo_);
-				if (!c.optimizer_->addEdge(odo))
-				{
-					std::cerr << "odo edge insert fail \n";
+				c.odometries_.push_back(odo);
+				if(k < maxpose_){
+					if (!c.optimizer_->addEdge(odo))
+					{
+						std::cerr << "odo edge insert fail \n";
+					}
 				}
+
 			}
 
 			c.poses_[k].Z_.resize(c.poses_[k].matches_left_to_right.size());
@@ -3266,7 +3370,7 @@ void print_map(const MapType & m)
 				initStereoEdge(c.poses_[k], nz);
 				cam_unproject(*c.poses_[k].Z_[nz], c.poses_[k].point_camera_frame[nz]);
 		
-				if (k%5==0){
+				if (k%3==0){
 					if (initMapPoint(c.poses_[k], nz, lm, edgeid))
 					{
 						edgeid++;

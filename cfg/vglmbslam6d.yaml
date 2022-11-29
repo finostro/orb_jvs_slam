@@ -3,22 +3,22 @@ MeasurementLikelihoodThreshold:  100.0
 
 lmExistenceProb: 0.01
 
-minframe: 00
-maxframe: 2500
+minframe: 70
+maxframe: 3000
 
-PE: 0.0001
-PD: 0.7
-numIterations: 2500
-numGibbs: 16
+PE: 0.000000001
+PD: 0.8
+numIterations: 2200
+numGibbs: 15
 numLandmarks: 100
-numComponents: 16
+numComponents: 10
 maxRange: 5
-numLevenbergIterations: 15
+numLevenbergIterations: 50
 tempFactor: 0.995
-initTemp: 1
+initTemp: 100
 birthDeathNumIter: 2
 crossoverNumIter: 13300 
-numPosesToOptimize: 40
+numPosesToOptimize: 60
 
 finalStateFile: optimizedState.g2o
 xlim : [-20.0 , 20.0 ]
@@ -33,25 +33,25 @@ anchorInfo:
 odomInfo:
     rows: 6
     cols: 6
-    data: [100000 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 100000 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 100000 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 10 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 0.0 , 10 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 10 ]
+    data: [30 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 30 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 30 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 10000 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 0.0 , 10000 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 10000 ]
 stereoInfo:
     rows: 3
     cols: 3
-    data: [1.5 , 0.0 , 0.0 ,
-    0.0 , 1.5 , 0.0 ,
-    0.0 , 0.0 , 1.5 ]
-logKappa: -40.0
+    data: [1 , 0.0 , 0.0 ,
+    0.0 , 1 , 0.0 ,
+    0.0 , 0.0 , 1 ]
+logKappa: -60.0
 
 
 viewingCosLimit: 0.5
 use_gui: true
-eurocFolder: /home/finostro/euroc_dataset/V2_01_easy
-eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V201.txt
+eurocFolder: /media/finostro/ssd_linux/euroc_dataset/V2_01_easy
+eurocTimestampsFilename: /media/finostro/ssd_linux/euroc_dataset/EuRoC_TimeStamps/V201.txt
 stereo_init_max_depth: 60.0
 
 base_link_to_cam0:
@@ -104,7 +104,7 @@ camera_params:
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-ORBextractor.nFeatures: 100
+ORBextractor.nFeatures: 40
 
 # ORB Extractor: Scale factor between levels in the scale pyramid 	
 ORBextractor.scaleFactor: 1.2

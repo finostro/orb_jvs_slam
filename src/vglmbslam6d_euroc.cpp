@@ -48,6 +48,7 @@ int main(int argc, char* argv[]){
 		HeapProfilerStart(perfHEAP_file.data());
 #endif
   vglmb.run(vglmb.config.numIterations_);
+  vglmb.deleteComponents();
   #ifdef _PERFTOOLS_HEAP
 		HeapProfilerStop();
 #endif

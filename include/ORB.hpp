@@ -96,7 +96,7 @@ namespace rfs{
         static constexpr double a = std::log(1.0/8.0);
         static constexpr double b = std::log(7.0/8.0);
         static constexpr double c = std::log(1.0/2.0);
-        double ret =14.0+30.0*(d*a+(1-d)*b+c);
+        double ret =14.0+50.0*(d*a+(1-d)*b+c);
         return  ret;
       }
       double falseAlarmLikelihood(){

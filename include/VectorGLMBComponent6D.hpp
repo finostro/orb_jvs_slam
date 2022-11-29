@@ -105,6 +105,8 @@ struct VectorGLMBComponent6D {
 	 nz at time k, used for switching using gibbs sampling*/
 
 	std::vector<OrbslamPose> poses_;
+	std::vector<OdometryEdge *> odometries_;
+	
 	std::vector<OrbslamMapPoint> landmarks_;
 	std::vector<double> landmarksResetProb_, landmarksInitProb_;
 

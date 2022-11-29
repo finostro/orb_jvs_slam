@@ -25,7 +25,7 @@ endif ()
 
 
 
-   SET(CMAKE_BUILD_TYPE RelWithDebInfo )
+   SET(CMAKE_BUILD_TYPE Debug )
 
 PROJECT(hglmbslam)
 
@@ -247,9 +247,11 @@ ADD_EXECUTABLE(vglmbslam6d src/vglmbslam6d_euroc.cpp  src/external/ORBextractor.
 
 
 
-TARGET_LINK_LIBRARIES(vglmbslam6d  yaml-cpp  ${Boost_LIBRARIES} rfsslam ${CERES_LIBRARIES} ${CSPARSE_LIBRARY} g2o_core g2o_csparse_extension g2o_solver_csparse g2o_types_slam3d g2o_types_sba g2o_types_sim3  g2o_stuff  
-${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES} gtsam ${Perftools_PROFILER_LIBRARY} ${Perftools_TCMALLOC_LIBRARY}  )
+# TARGET_LINK_LIBRARIES(vglmbslam6d  yaml-cpp  ${Boost_LIBRARIES} rfsslam ${CERES_LIBRARIES} ${CSPARSE_LIBRARY} g2o_core g2o_csparse_extension g2o_solver_csparse g2o_types_slam3d g2o_types_sba g2o_types_sim3  g2o_stuff  
+# ${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES} gtsam ${Perftools_PROFILER_LIBRARY} ${Perftools_TCMALLOC_LIBRARY}  )
 
+TARGET_LINK_LIBRARIES(vglmbslam6d  yaml-cpp  ${Boost_LIBRARIES} rfsslam ${CERES_LIBRARIES} ${CSPARSE_LIBRARY} g2o_core_rd g2o_csparse_extension_rd g2o_solver_csparse_rd g2o_types_slam3d_rd g2o_types_sba_rd g2o_types_sim3_rd  g2o_stuff_rd  
+${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES} gtsam ${Perftools_PROFILER_LIBRARY} ${Perftools_TCMALLOC_LIBRARY}  )
 
 # ADD_EXECUTABLE(hglmbslam6d src/vglmbslam6d_euroc_gtsam.cpp  src/external/ORBextractor.cc src/external/Converter.cc)
 # TARGET_LINK_LIBRARIES(hglmbslam6d  yaml-cpp  ${Boost_LIBRARIES} rfsslam  ${Perftools_PROFILER_LIBRARY} ${Perftools_TCMALLOC_LIBRARY} 
