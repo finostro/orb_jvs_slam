@@ -4,19 +4,20 @@ MeasurementLikelihoodThreshold:  100.0
 lmExistenceProb: 0.01
 
 minframe: 70
-maxframe: 3000
+maxframe: 300
+staticframes: 78
 
-PE: 1e-70
+PE: 1e-60
 PD: 0.7
-numIterations: 1500
+numIterations: 300
 numGibbs: 15
 numLandmarks: 100
 numComponents: 14
 maxRange: 5
-numLevenbergIterations: 15
+numLevenbergIterations: 5
 tempFactor: 0.995
-initTemp: 1
-birthDeathNumIter: 100000
+initTemp: 100
+birthDeathNumIter: 3
 crossoverNumIter: 13300 
 numPosesToOptimize: 60
 
@@ -33,19 +34,19 @@ anchorInfo:
 odomInfo:
     rows: 6
     cols: 6
-    data: [30 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 30 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 30 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 10000 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 0.0 , 10000 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 10000 ]
+    data: [100 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 100 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 100 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 1000 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 0.0 , 1000 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 1000 ]
 stereoInfo:
     rows: 3
     cols: 3
-    data: [5 , 0.0 , 0.0 ,
-    0.0 , 5 , 0.0 ,
-    0.0 , 0.0 , 5 ]
-logKappa: -120.0
+    data: [1 , 0.0 , 0.0 ,
+    0.0 , 1 , 0.0 ,
+    0.0 , 0.0 , 1 ]
+logKappa: -50.0
 
 
 viewingCosLimit: 0.5

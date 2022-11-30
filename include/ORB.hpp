@@ -67,7 +67,8 @@ namespace rfs{
           std::bitset<256> tmp(*(ulongptr+i));
           desc |= tmp<<(i*64);
         }
-        //std::cout << desc << "\n";
+        // std::cout << vc_desc << "\n";
+        // std::cout << desc << "\n";
       }
 
       void random(){
@@ -92,11 +93,13 @@ namespace rfs{
       }
 
       double likelihood(const ORBDescriptor &other){
-        double d = distance(*this, other)/255.0;
+        double d = distance(*this, other);
         static constexpr double a = std::log(1.0/8.0);
         static constexpr double b = std::log(7.0/8.0);
         static constexpr double c = std::log(1.0/2.0);
-        double ret =14.0+50.0*(d*a+(1-d)*b+c);
+        static constexpr double f = -1.0;
+        double ret =d*f;
+        //std::cout << d << "\n";
         return  ret;
       }
       double falseAlarmLikelihood(){

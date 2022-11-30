@@ -314,6 +314,7 @@ void print_map(const MapType & m)
 			//frames to load
 			int minframe;
 			int maxframe;
+			int staticframes;
 		} config;
 
 		/**
@@ -818,7 +819,7 @@ void print_map(const MapType & m)
 		}
 		checkDA(c);
 		int g2o_result = c.optimizer_->optimize(config.numLevenbergIterations_);
-		assert(g2o_result > 0);
+		//assert(g2o_result > 0);
 		checkDA(c);
 	}
 	void VectorGLMBSLAM6D::sampleComponents()
@@ -1263,6 +1264,7 @@ void print_map(const MapType & m)
 		config.tempFactor_ = node["tempFactor"].as<double>();
 		config.minframe = node["minframe"].as<int>();
 		config.maxframe = node["maxframe"].as<int>();
+		config.staticframes = node["staticframes"].as<int>();
 
 		config.crossoverNumIter_ = node["crossoverNumIter"].as<int>();
 		config.numPosesToOptimize_ = node["numPosesToOptimize"].as<int>();
@@ -1499,6 +1501,10 @@ void print_map(const MapType & m)
 
 			// optimize once at the start to calculate the hessian.
 			c.poses_[0].pPose->setFixed(true);
+			for(int k = 0; k< config.staticframes-config.minframe ; k++){
+				c.poses_[k].pPose->setFixed(true);
+			}
+
 			c.optimizer_->initializeOptimization();
 			//c.optimizer_->computeInitialGuess();
 			c.optimizer_->setVerbose(false);
@@ -1507,9 +1513,9 @@ void print_map(const MapType & m)
 		if (!c.optimizer_->verifyInformationMatrices(true)){
 			std::cerr << "info is bad\n";
 		}
-			int niterations = c.optimizer_->optimize(1);
-			std::cout << "niterations  " << niterations << "\n";
-			assert(niterations > 0);
+			// int niterations = c.optimizer_->optimize(1);
+			// std::cout << "niterations  " << niterations << "\n";
+			// assert(niterations > 0);
 		}
 
 		// Visualization
@@ -1564,7 +1570,9 @@ void print_map(const MapType & m)
 #endif
 
 		boost::uniform_real<> uni_dist(0, 1);
-		for(int k = minpose_ +1; k<maxpose_ ; k++){
+		int startk = std::max(minpose_ , config.staticframes-config.minframe );
+
+		for(int k = startk ; k < maxpose_ ; k++){
 			//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
 			double d = uni_dist(randomGenerators_[threadnum]);
 			g2o::Vector6 p_v;
@@ -1572,15 +1580,27 @@ void print_map(const MapType & m)
 			p_v = c.poses_[k].pPose->estimate().inverse().toMinimalVector();
 	
 
-			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
-			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
-			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
+			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
+			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
+			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
 			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
 			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
 			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
 			g2o::SE3Quat pos(p_v);
 			c.poses_[k].pPose->setEstimate(pos.inverse());
 		}
+
+		auto displacement = c.poses_[maxpose_].pPose->estimate()*c.poses_[maxpose_-1].pPose->estimate().inverse();
+		auto current_pose = c.poses_[maxpose_].pPose->estimate();
+
+		for(int k = maxpose_ ; k < c.poses_.size() ; k++){
+			//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
+			current_pose = current_pose*displacement;
+
+
+			c.poses_[k].pPose->setEstimate(current_pose);
+		}
+
 	}
 
 	void VectorGLMBSLAM6D::selectNN(VectorGLMBComponent6D &c)
@@ -1601,8 +1621,8 @@ void print_map(const MapType & m)
 		{
 
 			updateGraph(c);
-			for(int i=0; i< c.maxpose_ && i < 1 ; i++){
-				c.poses_[i].pPose->setFixed(true);
+			for(int k = 0; k< config.staticframes-config.minframe ; k++){
+				c.poses_[k].pPose->setFixed(true);
 			}
 			c.optimizer_->initializeOptimization();
 			//c.optimizer_->computeInitialGuess();
@@ -1922,9 +1942,9 @@ void print_map(const MapType & m)
 			updateGraph(c);
 			moveBirth(c);
 			checkGraph(c);
-			// for(int k=0; k< minpose_ ; k++){
-			// 	c.poses_[k].pPose->setFixed(true);
-			// }
+			for(int k = 0; k< config.staticframes-config.minframe ; k++){
+				c.poses_[k].pPose->setFixed(true);
+			}
 			c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
 			//c.optimizer_->computeInitialGuess();
@@ -1932,7 +1952,7 @@ void print_map(const MapType & m)
 			//std::cout  << "optimizing \n";
 			//c.optimizer_->save("initial.g2o");
 			int niterations = c.optimizer_->optimize(ni);
-			assert(niterations > 0);
+			//assert(niterations > 0);
 			perturbTraj(c);
 			//std::cout  << "optimized \n";
 			//c.optimizer_->save("01.g2o");
@@ -1999,11 +2019,11 @@ void print_map(const MapType & m)
 				{
 					expectedChange += sampleDA(c);
 				}
-				// if (iteration_ % config.birthDeathNumIter_ == 0) {
-				// 	if ((iteration_ / config.birthDeathNumIter_) % 3 ==2) {
-				// 		expectedChange += mergeLM(c);
-				// 	}
-				// }
+				if (iteration_ % config.birthDeathNumIter_ == 0) {
+					if ((iteration_ / config.birthDeathNumIter_) % 3 ==2) {
+						expectedChange += mergeLM(c);
+					}
+				}
 			}
 			// expectedChange += sampleLMDeath(c);
 			// expectedChange += sampleLMBirth(c);
@@ -2044,7 +2064,7 @@ void print_map(const MapType & m)
 			updateGraph(c);
 			moveBirth(c);
 			checkGraph(c);
-			for(int k=0; k< c.maxpose_ && k < 1 ; k++){
+			for(int k = 0; k< config.staticframes-config.minframe ; k++){
 				c.poses_[k].pPose->setFixed(true);
 			}
 			c.poses_[0].pPose->setFixed(true);
@@ -2055,7 +2075,7 @@ void print_map(const MapType & m)
 				std::cerr << "info is bad\n";
 			}
 			niterations = c.optimizer_->optimize(ni);
-			assert(niterations > 0);
+			//assert(niterations > 0);
 			// std::cout <<"niterations  " <<c.optimizer_->optimize(ni) << "\n";
 			calculateWeight(c);
 
@@ -2606,16 +2626,25 @@ void print_map(const MapType & m)
 
 		for (int i = 0; i < c.landmarks_.size(); i++)
 		{
-			if (c.landmarks_[i].numDetections_ <= 1)
+			if (c.landmarks_[i].numDetections_ < 1)
 			{
+				continue;
+			}
+			if (c.landmarks_[i].birthTime_< c.poses_[minpose_].stamp){
 				continue;
 			}
 
 			c.landmarksResetProb_[i] = -(c.landmarks_[i].numDetections_) * std::log(config.PD_) - (c.landmarks_[i].numFoV_ - c.landmarks_[i].numDetections_) * std::log(1 - config.PD_) - std::log(config.PE_) + std::log(1 - config.PE_);
-			c.landmarksResetProb_[i] = (c.landmarks_[i].numFoV_*std::log(config.PD_) - c.landmarks_[i].numDetections_)/c.landmarks_[i].numFoV_*std::log(config.PD_);
-			
-			double p = std::exp(c.landmarksResetProb_[i]);
-			if (uni_dist(randomGenerators_[threadnum]) > c.landmarksResetProb_[i] )
+			//c.landmarksResetProb_[i] =( (double)( c.landmarks_[i].numDetections_))/c.landmarks_[i].numFoV_;
+			double det_r =( (double)( c.landmarks_[i].numDetections_))/c.landmarks_[i].numFoV_;
+			double p;
+			if (det_r > config.PD_){
+				p = 0.01;
+			}else{
+				p = 0.01+(config.PD_-det_r)/10.0;
+			}
+			//double p = exp (-(1-c.landmarksResetProb_[i])/(config.PD_) );
+			if (uni_dist(randomGenerators_[threadnum]) < c.landmarksResetProb_[i] )
 			{
 				/*
 				 c.landmarksResetProb_[i] = (1-((double)c.landmarks_[i]numDetections_)/c.landmarks_[i].numFoV_)*(config.PD_);
@@ -2934,15 +2963,18 @@ void print_map(const MapType & m)
 
 				for (int lm = 0; lm < c.landmarks_.size(); lm++)
 				{
+					
+					if (c.landmarks_[lm].numDetections_ >0 || (c.landmarks_[lm].birthTime_ <= c.poses_[k].stamp )){
 
-					if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
-												config.viewingCosLimit_, config.g2o_cam_params))
-					{
-							c.poses_[k].fov_.push_back(c.landmarks_[lm].pPoint->id());
-							c.landmarks_[lm].numFoV_++;
-							c.landmarks_[lm].is_in_fov_.push_back(k);
+						if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
+													config.viewingCosLimit_, config.g2o_cam_params))
+						{
+								c.poses_[k].fov_.push_back(c.landmarks_[lm].pPoint->id());
+								c.landmarks_[lm].numFoV_++;
+								c.landmarks_[lm].is_in_fov_.push_back(k);
 
-						
+							
+						}
 					}
 				}
 			}
@@ -2980,19 +3012,19 @@ void print_map(const MapType & m)
 				//prechecking daprobs with descriptor distance
 				c.DAProbs_[k][nz].i.clear();
 				c.DAProbs_[k][nz].i.reserve(c.poses_[k].fov_.size()+1);
-				for(auto lmidx:c.poses_[k].fov_){
-					auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
-					// int dist = descriptorDistance(c.poses_[k].descriptors_left.row(c.poses_[k].matches_left_to_right[nz].queryIdx),
-					// lm.descriptor);
-					int dist = ORBDescriptor::distance(lm.descriptor , c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
+				// for(auto lmidx:c.poses_[k].fov_){
+				// 	auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
+				// 	// int dist = descriptorDistance(c.poses_[k].descriptors_left.row(c.poses_[k].matches_left_to_right[nz].queryIdx),
+				// 	// lm.descriptor);
+				// 	int dist = ORBDescriptor::distance(lm.descriptor , c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
 
-					if (dist < 80){
-						c.DAProbs_[k][nz].i.push_back(lmidx); 
-					}
+				// 	if (dist < 80){
+				// 		c.DAProbs_[k][nz].i.push_back(lmidx); 
+				// 	}
 					
-				}
-				c.DAProbs_[k][nz].i.push_back(-5); // add posibility of false alarm
-				c.DAProbs_[k][nz].l.resize(c.DAProbs_[k][nz].i.size());
+				// }
+				// c.DAProbs_[k][nz].i.push_back(-5); // add posibility of false alarm
+				// c.DAProbs_[k][nz].l.resize(c.DAProbs_[k][nz].i.size());
 
 				auto it = c.DA_bimap_[k].left.find(nz);
 				int selectedDA = -5;
@@ -3022,21 +3054,22 @@ void print_map(const MapType & m)
 						c.poses_[k].Z_[nz]->jacobianOplusXj();
 					poseHessianCopy -= Jpose.transpose() * c.poses_[k].Z_[nz]->information() * Jpose;
 				}
-				for (int a = 0; a < c.DAProbs_[k][nz].i.size(); a++)
-				{
-					c.DAProbs_[k][nz].l[a] = 0;
-					if (c.DAProbs_[k][nz].i[a] == -5)
-					{ // set measurement to false alarm
-						c.DAProbs_[k][nz].l[a] = config.logKappa_;
-					}
-					else
-					{
-						auto &lm = c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id];
+				c.DAProbs_[k][nz].i.push_back(-5);
+				c.DAProbs_[k][nz].l.push_back(config.logKappa_);
 
+				for(auto lmidx:c.poses_[k].fov_){
+
+					double p=0.0;
+					StereoMeasurementEdge  &z = *c.poses_[k].Z_[nz];
+
+						auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
 				
-						c.DAProbs_[k][nz].l[a] += lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
+						p += lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
+						if (p < -80){
+							continue;
+						}
 
-						c.DAProbs_[k][nz].l[a] += std::log(config.PD_) - std::log(1 - config.PD_);
+						p += std::log(config.PD_) - std::log(1 - config.PD_);
 						c.poses_[k].Z_[nz]->setVertex(0, lm.pPoint);
 
 						c.poses_[k].Z_[nz]->g2o::BaseBinaryEdge<3, g2o::Vector3, PointType, PoseType>::linearizeOplus(jac_ws);
@@ -3049,7 +3082,6 @@ void print_map(const MapType & m)
 								-c.poses_[k].Z_[nz]->error();
 
 						if (omega_r.norm() > 50){
-							c.DAProbs_[k][nz].l[a] = -1e50;
 							continue;
 						}
 
@@ -3059,11 +3091,11 @@ void print_map(const MapType & m)
 							PointType::HessianBlockType::PlainMatrix h;
 							PointType::HessianBlockType pointHessian(h.data());
 
-							if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numDetections_ > 0)
+							if (c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].numDetections_ > 0)
 							{
-								assert(c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].pPoint->hessianData()!=NULL);
+								assert(c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData()!=NULL);
 								new (&pointHessian) PointType::HessianBlockType(
-									c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
+									c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
 
 								// std::cout << "g2o pointH: " << pointHessian << "\n\n\n";
 							}
@@ -3072,7 +3104,7 @@ void print_map(const MapType & m)
 								h = config.anchorInfo_;
 								// std::cout << "calc pointH: " << pointHessian << "\n\n\n";
 							}
-							// std::cout << "numdetections:  " << c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numDetections_  << "\n";
+							// std::cout << "numdetections:  " << c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].numDetections_  << "\n";
 
 							StereoMeasurementEdge::JacobianXjOplusType Jpose =
 								c.poses_[k].Z_[nz]->jacobianOplusXj();
@@ -3119,24 +3151,24 @@ void print_map(const MapType & m)
 									H);
 							sol = lltofH.solve(b);
 
-							c.DAProbs_[k][nz].l[a] += std::log(
+							p += std::log(
 														  poseHessianCopy.determinant()) +
 													  std::log(pointHessian.determinant()) - std::log(lltofH.matrixL().determinant());
-							assert(!isnan(c.DAProbs_[k][nz].l[a]));
-							c.DAProbs_[k][nz].l[a] += std::log(
+							assert(!isnan(p));
+							p += std::log(
 														  c.poses_[k].Z_[nz]->information().determinant()) +
 													  posHLogDet;
-							assert(!isnan(c.DAProbs_[k][nz].l[a]));
+							assert(!isnan(p));
 
-							c.DAProbs_[k][nz].l[a] += -0.5 * (c.poses_[k].Z_[nz]->chi2() - sol.dot(b));
-							assert(!isnan(c.DAProbs_[k][nz].l[a]));
-							c.DAProbs_[k][nz].l[a] += -0.5 * c.poses_[k].Z_[nz]->dimension() * std::log(2 * M_PI);
-							assert(!isnan(c.DAProbs_[k][nz].l[a]));
+							p += -0.5 * (c.poses_[k].Z_[nz]->chi2() - sol.dot(b));
+							assert(!isnan(p));
+							p += -0.5 * c.poses_[k].Z_[nz]->dimension() * std::log(2 * M_PI);
+							assert(!isnan(p));
 						}
 						else
 						{ // if pose is fixed only calculate updated landmark
-							//c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].pPoint->solveDirect();
-							auto &lm = c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id];
+							//c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->solveDirect();
+							//auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
 							
 							PointType::HessianBlockType::PlainMatrix h;
 							PointType::HessianBlockType pointHessian(h.data());
@@ -3152,7 +3184,7 @@ void print_map(const MapType & m)
 							if (lm.numDetections_ > 0)
 							{
 								new (&pointHessian) PointType::HessianBlockType(
-									c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
+									c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
 
 								// std::cout << "g2o pointH: " << pointHessian << "\n\n\n";
 							}
@@ -3182,24 +3214,24 @@ void print_map(const MapType & m)
 								lltofH(H);
 							sol = lltofH.solve(b);
 
-							c.DAProbs_[k][nz].l[a] += -std::log(
+							p += -std::log(
 								lltofH.matrixL().determinant());
-							assert(!isnan(c.DAProbs_[k][nz].l[a]));
-							c.DAProbs_[k][nz].l[a] +=
+							assert(!isnan(p));
+							p +=
 								std::log(
 									c.poses_[k].Z_[nz]->information().determinant());
-							assert(!isnan(c.DAProbs_[k][nz].l[a]));
+							assert(!isnan(p));
 
-							// c.DAProbs_[k][nz].l[a] += -0.5 * (.poses_[k].Z_[nz]->chi2() - sol.dot(b));
-							c.DAProbs_[k][nz].l[a] += -0.5 * (c.poses_[k].Z_[nz]->chi2());
-							assert(!isnan(c.DAProbs_[k][nz].l[a]));
-							c.DAProbs_[k][nz].l[a] += -0.5 * c.poses_[k].Z_[nz]->dimension() * std::log(2 * M_PI);
-							assert(!isnan(c.DAProbs_[k][nz].l[a]));
+							// p += -0.5 * (.poses_[k].Z_[nz]->chi2() - sol.dot(b));
+							p += -0.5 * (c.poses_[k].Z_[nz]->chi2());
+							assert(!isnan(p));
+							p += -0.5 * c.poses_[k].Z_[nz]->dimension() * std::log(2 * M_PI);
+							assert(!isnan(p));
 
 
 							// 	std::cerr << "jp: " << Jpoint << "\n";
 							// 	std::cerr << "H: " << pointHessian << "\n";
-							// if (c.DAProbs_[k][nz].l[a] != c.DAProbs_[k][nz].l[a]){
+							// if (p != p){
 							// 	std::cerr << "nanerror\n";
 							// 	std::cerr << "nop\n";
 							// }
@@ -3207,8 +3239,12 @@ void print_map(const MapType & m)
 
 
 						}
+					
+					assert(!isnan(p));
+					if (p  > config.logKappa_ - 1000){
+						c.DAProbs_[k][nz].l.push_back(p);
+						c.DAProbs_[k][nz].i.push_back(lmidx);
 					}
-					assert(!isnan(c.DAProbs_[k][nz].l[a]));
 				}
 
 
@@ -3255,9 +3291,9 @@ void print_map(const MapType & m)
 		stereo_edge->setMeasurement(uvu);
 
 
-		// g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
-		// stereo_edge->setRobustKernel(rk);
-		// rk->setDelta(sqrt(7.8));
+		g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
+		stereo_edge->setRobustKernel(rk);
+		rk->setDelta(sqrt(7.8));
 
 		pose.Z_[numMatch] = stereo_edge;
 
@@ -3396,7 +3432,7 @@ void print_map(const MapType & m)
 				initStereoEdge(c.poses_[k], nz);
 				cam_unproject(*c.poses_[k].Z_[nz], c.poses_[k].point_camera_frame[nz]);
 		
-				if (k%5==0){
+				if (k%10==0){
 					if (initMapPoint(c.poses_[k], nz, lm, edgeid))
 					{
 						edgeid++;
