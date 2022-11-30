@@ -865,11 +865,12 @@ void print_map(const MapType & m)
 
 			// add data association j to component i
 			changeDA(components_[i], it->first);
-			for(int numpose = 1 ; numpose < components_[i].poses_.size() ; numpose++){
+			for(int numpose = 0 ; numpose < components_[i].poses_.size() ; numpose++){
 				components_[i].poses_[numpose].pPose->setEstimate(it->second.trajectory[numpose]);	
-				
-				double dist = (it->second.trajectory[numpose].translation()-it->second.trajectory[numpose-1].translation()).norm();
-				assert (dist<0.1);
+				if (numpose>0){
+					double dist = (it->second.trajectory[numpose].translation()-it->second.trajectory[numpose-1].translation()).norm();
+					assert (dist<0.1);
+				}
 			}
 			components_[i].logweight_ = it->second.weight;
 
@@ -1563,7 +1564,7 @@ void print_map(const MapType & m)
 #endif
 
 		boost::uniform_real<> uni_dist(0, 1);
-		for(int k = minpose_ ; k<maxpose_ ; k++){
+		for(int k = minpose_ +1; k<maxpose_ ; k++){
 			//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
 			double d = uni_dist(randomGenerators_[threadnum]);
 			g2o::Vector6 p_v;
@@ -1784,6 +1785,7 @@ void print_map(const MapType & m)
 		if (visited_.size() > 0)
 		{
 			sampleComponents();
+			//visited_.clear();
 			std::cout << "sampling compos \n";
 		}
 
@@ -2059,9 +2061,13 @@ void print_map(const MapType & m)
 
 			for ( int numpose =1 ; numpose < maxpose_; numpose++){
 				double dist = (c.poses_[numpose].pPose->estimate().translation()-c.poses_[numpose-1].pPose->estimate().translation()).norm();
-				// std::cout << "chi2 " << c.odometries_[numpose-1]->chi2() << "\n";
-				// std::cout << "globalchi2 " << c.optimizer_->activeChi2() << "\n";
-				// std::cout << "dist " << dist << "\n";
+				if (dist>0.1){
+					std::cout << "dist to high"  << "\n";
+					std::cout << "chi2 " << c.odometries_[numpose-1]->chi2() << "\n";
+					std::cout << "globalchi2 " << c.optimizer_->activeChi2() << "\n";
+					std::cout << "dist " << dist << "\n";
+				}
+				
 
 				assert (dist<0.1);
 			}
@@ -2077,7 +2083,7 @@ void print_map(const MapType & m)
 
 			#pragma omp critical(bestweight)
 			{
-				if (c.logweight_ > bestWeight_-100000){
+				if (c.logweight_ > bestWeight_-10000){
 					std::tie(it, inserted) = visited_.insert(pair);
 					insertionP_ = insertionP_ * 0.99;
 					if (inserted){
@@ -2128,7 +2134,7 @@ void print_map(const MapType & m)
 					}
 
 					for (auto i = visited_.begin(), last = visited_.end(); i != last; ) {
-					if (i->second.weight < bestWeight_-100000 ) {
+					if (i->second.weight < bestWeight_-10000 ) {
 						i = visited_.erase(i);
 					} else {
 						++i;
@@ -2730,22 +2736,33 @@ void print_map(const MapType & m)
 					{
 						if (c.DA_bimap_[k].right.count(c.DAProbs_[k][nz].i[a]) == 0)
 						{ // landmark is not already associated to another measurement
-							probs.i.push_back(c.DAProbs_[k][nz].i[a]);
+							
 							if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numDetections_ == 0)
 							{
-								likelihood +=
-									std::log(config.PE_) - std::log(1 - config.PE_) + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
-								// std::cout <<" 0 detection: increase:  " << std::log(config.PE_)-std::log(1-config.PE_) + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_)<<"\n";
-								probs.l.push_back(likelihood);
+								
+								if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].birthTime_ < c.poses_[k].stamp
+								&& c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].birthTime_ > c.poses_[k].stamp-1.0){
+									likelihood +=
+										std::log(config.PE_) - std::log(1 - config.PE_) + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
+									// std::cout <<" 0 detection: increase:  " << std::log(config.PE_)-std::log(1-config.PE_) + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_)<<"\n";
+									probs.i.push_back(c.DAProbs_[k][nz].i[a]);
+									probs.l.push_back(likelihood);
+									if (likelihood > maxprob)
+									{
+										maxprob = likelihood;
+										maxprobi = a;
+									}
+								}
 							}
 							else
 							{
+								probs.i.push_back(c.DAProbs_[k][nz].i[a]);
 								probs.l.push_back(c.DAProbs_[k][nz].l[a]);
-							}
-							if (likelihood > maxprob)
-							{
-								maxprob = likelihood;
-								maxprobi = a;
+								if (likelihood > maxprob)
+								{
+									maxprob = likelihood;
+									maxprobi = a;
+								}
 							}
 						}
 					}
@@ -2824,11 +2841,20 @@ void print_map(const MapType & m)
 						}
 						if (c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].numDetections_>0 ){
 							int kbirth = c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthPose->pPose->id();
+							auto &lm = c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()];
 							
 							auto birth_it = c.DA_bimap_[kbirth].left.find(c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch);
 							if (birth_it == c.DA_bimap_[kbirth].left.end()){
-								c.DA_bimap_[kbirth].insert({c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch, probs.i[sample] });
-								c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].numDetections_++;
+								auto birth_it2 = c.DA_bimap_[kbirth].right.find(probs.i[sample]); 
+								if (birth_it2 == c.DA_bimap_[kbirth].right.end()){
+									if(lm.numDetections_== lm.numFoV_){
+										std::cout << "adding imposssible det_:\n";
+										printDA(c);
+										assert(0);
+									}
+									c.DA_bimap_[kbirth].insert({c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch, probs.i[sample] });
+									c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].numDetections_++;
+								}
 							}
 						}
 					}
@@ -2912,12 +2938,11 @@ void print_map(const MapType & m)
 					if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
 												config.viewingCosLimit_, config.g2o_cam_params))
 					{
-						if (c.landmarks_[lm].numDetections_ >0 || (c.landmarks_[lm].birthTime_ < c.poses_[k].stamp && c.landmarks_[lm].birthTime_ >  c.poses_[k].stamp-1.0)){
 							c.poses_[k].fov_.push_back(c.landmarks_[lm].pPoint->id());
 							c.landmarks_[lm].numFoV_++;
 							c.landmarks_[lm].is_in_fov_.push_back(k);
 
-						}
+						
 					}
 				}
 			}
@@ -2953,6 +2978,7 @@ void print_map(const MapType & m)
 				
 				//c.DAProbs_[k][nz].i = c.poses_[k].fov_;
 				//prechecking daprobs with descriptor distance
+				c.DAProbs_[k][nz].i.clear();
 				c.DAProbs_[k][nz].i.reserve(c.poses_[k].fov_.size()+1);
 				for(auto lmidx:c.poses_[k].fov_){
 					auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
@@ -3370,7 +3396,7 @@ void print_map(const MapType & m)
 				initStereoEdge(c.poses_[k], nz);
 				cam_unproject(*c.poses_[k].Z_[nz], c.poses_[k].point_camera_frame[nz]);
 		
-				if (k%3==0){
+				if (k%5==0){
 					if (initMapPoint(c.poses_[k], nz, lm, edgeid))
 					{
 						edgeid++;
