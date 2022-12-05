@@ -125,7 +125,7 @@ endif()
 FIND_PACKAGE(Perftools)
 IF(Perftools_FOUND)
   IF("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-    SET(USE_CPU_PROFILER OFF CACHE BOOL "Use Google Perftools for CPU profiling.")
+    SET(USE_CPU_PROFILER ON CACHE BOOL "Use Google Perftools for CPU profiling.")
     SET(USE_HEAP_PROFILER OFF CACHE BOOL "Use Google Perftools for heap profiling.")
   ELSE()
     SET(USE_CPU_PROFILER OFF) # Does not play nice with Clang

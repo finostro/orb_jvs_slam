@@ -300,6 +300,11 @@ void print_map(const MapType & m)
 			cv::Mat M1l_, M2l_;
 			cv::Mat M1r_, M2r_;
 
+			// add some noise to traj before association
+			double perturbTrans ;
+			double perturbRot ;
+
+
 			// ORB params
 			struct ORBExtractor
 			{
@@ -663,26 +668,24 @@ void print_map(const MapType & m)
 				numlm++;
 			}
 		}
-		map_cloud->width = c.landmarks_.size();
-		map_cloud->resize(c.landmarks_.size());
-		numlm = 0;
+		map_cloud->width = numlm;
+		map_cloud->resize(numlm);
+		//numlm = 0;
+		int nmap=0;
 		for (int i = 0; i < c.landmarks_.size(); i++)
 		{
-			map_cloud->at(i).x = c.landmarks_[i].pPoint->estimate()[0];
-			map_cloud->at(i).y = c.landmarks_[i].pPoint->estimate()[1];
-			map_cloud->at(i).z = c.landmarks_[i].pPoint->estimate()[2];
 			if (c.landmarks_[i].numDetections_ > 0)
 			{
 
-				map_cloud->at(i).intensity = 1;
+				map_cloud->at(nmap).x = c.landmarks_[i].pPoint->estimate()[0];
+				map_cloud->at(nmap).y = c.landmarks_[i].pPoint->estimate()[1];
+				map_cloud->at(nmap).z = c.landmarks_[i].pPoint->estimate()[2];
+				
+				map_cloud->at(nmap).intensity = c.landmarks_[i].numDetections_;
 
-				numlm++;
+				nmap++;
 			}
-			else
-			{
-				map_cloud->at(i).intensity = 0.3;
-			}
-			map_cloud->at(i).intensity = c.landmarks_[i].numDetections_;
+
 		}
 
 		sensor_msgs::PointCloud2 ros_map_cloud;
@@ -818,9 +821,9 @@ void print_map(const MapType & m)
 			std::cerr << "info is bad\n";
 		}
 		checkDA(c);
-		int g2o_result = c.optimizer_->optimize(config.numLevenbergIterations_);
+		//int g2o_result = c.optimizer_->optimize(config.numLevenbergIterations_);
 		//assert(g2o_result > 0);
-		checkDA(c);
+		//checkDA(c);
 	}
 	void VectorGLMBSLAM6D::sampleComponents()
 	{
@@ -1294,6 +1297,10 @@ void print_map(const MapType & m)
 
 		config.viewingCosLimit_ = node["viewingCosLimit"].as<double>();
 
+		config.perturbTrans = node["perturbTrans"].as<double>();
+		config.perturbRot = node["perturbRot"].as<double>();
+
+
 		config.eurocFolder_ = node["eurocFolder"].as<std::string>();
 		config.use_gui_ = node["use_gui"].as<bool>();
 
@@ -1572,7 +1579,7 @@ void print_map(const MapType & m)
 		boost::uniform_real<> uni_dist(0, 1);
 		int startk = std::max(minpose_ , config.staticframes-config.minframe );
 
-		for(int k = startk ; k < maxpose_ ; k++){
+		for(int k = startk ; k < c.poses_.size() ; k++){
 			//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
 			double d = uni_dist(randomGenerators_[threadnum]);
 			g2o::Vector6 p_v;
@@ -1580,26 +1587,26 @@ void print_map(const MapType & m)
 			p_v = c.poses_[k].pPose->estimate().inverse().toMinimalVector();
 	
 
-			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
-			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
-			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.0001;
-			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
-			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
-			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*0.001;
+			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbTrans;
+			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbTrans;
+			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbTrans;
+			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot;
+			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot;
+			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot;
 			g2o::SE3Quat pos(p_v);
 			c.poses_[k].pPose->setEstimate(pos.inverse());
 		}
 
-		auto displacement = c.poses_[maxpose_].pPose->estimate()*c.poses_[maxpose_-1].pPose->estimate().inverse();
-		auto current_pose = c.poses_[maxpose_].pPose->estimate();
+		// auto displacement = c.poses_[maxpose_].pPose->estimate()*c.poses_[maxpose_-1].pPose->estimate().inverse();
+		// auto current_pose = c.poses_[maxpose_].pPose->estimate();
 
-		for(int k = maxpose_ ; k < c.poses_.size() ; k++){
-			//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
-			current_pose = current_pose*displacement;
+		// for(int k = maxpose_ ; k < c.poses_.size() ; k++){
+		// 	//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
+		// 	current_pose = current_pose*displacement;
 
 
-			c.poses_[k].pPose->setEstimate(current_pose);
-		}
+		// 	c.poses_[k].pPose->setEstimate(current_pose);
+		// }
 
 	}
 
@@ -1932,8 +1939,24 @@ void print_map(const MapType & m)
 		#pragma omp parallel for
 		for (int i = 0; i < components_.size(); i++)
 		{
-			auto &c = components_[i];
 
+
+			
+			auto &c = components_[i];
+			for (int k=0; k< minpose_;k+=2){
+				if(k%3!=0){
+					for(int nz=0; nz < c.poses_[k].Z_.size();nz++){
+						c.poses_[k].Z_[nz]->setLevel(2);
+					}
+				}
+			}
+			for(int k = 1; k< maxpose_ ; k++){
+				c.odometries_[k-1]->setLevel(0);
+			}
+			for(int k = maxpose_; k< c.poses_.size() ; k++){
+				//c.poses_[k].pPose->setFixed(true);
+				c.odometries_[k-1]->setLevel(2);
+			}
 			int threadnum = 0;
 			#ifdef _OPENMP
 			threadnum = omp_get_thread_num();
@@ -2004,42 +2027,90 @@ void print_map(const MapType & m)
 					{
 					case 0:
 						 expectedChange += sampleLMDeath(c);
+						// expectedChange += mergeLM(c);
 						break;
 					case 1:
-						 expectedChange += sampleLMDeath(c);
+						 expectedChange += sampleLMBirth(c);
+						// expectedChange += mergeLM(c);
 						break;
 
 					case 2:
-						 expectedChange += sampleLMDeath(c);
+						 expectedChange += mergeLM(c);
 						break;
 					}
+
+
+					checkGraph(c);
+					updateGraph(c);
+					moveBirth(c);
+					checkGraph(c);
+					// for(int k = 0; k< config.staticframes-config.minframe ; k++){
+					// 	c.poses_[k].pPose->setFixed(true);
+					// }
+					// c.poses_[0].pPose->setFixed(true);
+					c.optimizer_->initializeOptimization();
+					int niterations = c.optimizer_->optimize(2);
+					updateMetaStates(c);
+
+					moveBirth(c);
+					checkGraph(c);
+					updateFoV(c);
+					checkGraph(c);	
+					updateDAProbs(c, minpose_, maxpose_);
+
 				}
 
 				for (int i = 1; i < config.numGibbs_; i++)
 				{
 					expectedChange += sampleDA(c);
+
+
+					// if (i%7==0){
+					// 	checkGraph(c);
+					// 	updateGraph(c);
+					// 	checkGraph(c);
+					// 	for(int k = 0; k< minpose_ ; k++){
+					// 		c.poses_[k].pPose->setFixed(true);
+					// 	}
+					// 	c.poses_[0].pPose->setFixed(true);
+					// 	c.optimizer_->initializeOptimization();
+					// 	int niterations = c.optimizer_->optimize(1);
+					// 	// updateMetaStates(c);
+					// 	// moveBirth(c);
+					// 	// checkGraph(c);
+					// 	// updateFoV(c);
+					// 	// checkGraph(c);	
+					// 	updateDAProbs(c, minpose_, maxpose_);
+					// }
 				}
-				if (iteration_ % config.birthDeathNumIter_ == 0) {
-					if ((iteration_ / config.birthDeathNumIter_) % 3 ==2) {
-						expectedChange += mergeLM(c);
-					}
-				}
+				// for(int k = config.staticframes - config.minframe; k< minpose_ ; k++){
+				// 			c.poses_[k].pPose->setFixed(false);
+							
+				// 		}
+				
+				// if (iteration_ % config.birthDeathNumIter_ == 0)
+				// {
+				// 	switch ((iteration_ / config.birthDeathNumIter_) % 3)
+				// 	{
+				// 	case 0:
+				// 		 expectedChange += sampleLMBirth(c);
+				// 		 expectedChange += mergeLM(c);
+				// 		break;
+				// 	case 1:
+				// 		 expectedChange += sampleLMDeath(c);
+				// 		 expectedChange += mergeLM(c);
+				// 		break;
+
+				// 	case 2:
+				// 		 expectedChange += mergeLM(c);
+				// 		break;
+				// 	}
+				// }
 			}
 			// expectedChange += sampleLMDeath(c);
 			// expectedChange += sampleLMBirth(c);
 			// expectedChange += sampleLMDeath(c);
 			
-			TrajectoryWeight to_insert;
-			to_insert.weight = c.logweight_;
-			to_insert.trajectory.resize(c.poses_.size() );
-			for(int numpose =0; numpose< maxpose_; numpose++){
-				to_insert.trajectory[numpose]=c.poses_[numpose].pPose->estimate();
-			}
-			for(int numpose = maxpose_; numpose< c.poses_.size(); numpose++){
-				to_insert.trajectory[numpose]=c.poses_[maxpose_-1].pPose->estimate();
-				c.poses_[numpose].pPose->setEstimate(c.poses_[maxpose_-1].pPose->estimate());
-			}
-			auto pair = std::make_pair(c.DA_bimap_, to_insert);
 
 
 			/*
@@ -2079,13 +2150,27 @@ void print_map(const MapType & m)
 			// std::cout <<"niterations  " <<c.optimizer_->optimize(ni) << "\n";
 			calculateWeight(c);
 
+			TrajectoryWeight to_insert;
+			to_insert.weight = c.logweight_;
+			to_insert.trajectory.resize(c.poses_.size() );
+			for(int numpose =0; numpose< maxpose_; numpose++){
+				to_insert.trajectory[numpose]=c.poses_[numpose].pPose->estimate();
+			}
+			for(int numpose = maxpose_; numpose< c.poses_.size(); numpose++){
+				to_insert.trajectory[numpose]=c.poses_[maxpose_-1].pPose->estimate();
+				c.poses_[numpose].pPose->setEstimate(c.poses_[maxpose_-1].pPose->estimate());
+			}
+			auto pair = std::make_pair(c.DA_bimap_, to_insert);
+
 			for ( int numpose =1 ; numpose < maxpose_; numpose++){
 				double dist = (c.poses_[numpose].pPose->estimate().translation()-c.poses_[numpose-1].pPose->estimate().translation()).norm();
 				if (dist>0.1){
-					std::cout << "dist to high"  << "\n";
+					std::cout << termcolor::red << "dist to high setting w to -inf"  << "\n";
 					std::cout << "chi2 " << c.odometries_[numpose-1]->chi2() << "\n";
 					std::cout << "globalchi2 " << c.optimizer_->activeChi2() << "\n";
-					std::cout << "dist " << dist << "\n";
+					std::cout << "dist " << dist << "\n" << termcolor::reset ;
+				
+					c.logweight_ = -std::numeric_limits<double>::infinity();
 				}
 				
 
@@ -2150,6 +2235,7 @@ void print_map(const MapType & m)
 						std::cout << termcolor::yellow << "========== piblishingmarkers:"
 								  << bestWeight_ << " ============\n"
 								  << termcolor::reset;
+						perturbTraj(c);
 						publishMarkers(c);
 					}
 
@@ -2365,7 +2451,7 @@ void print_map(const MapType & m)
 		}
 		for (auto &lm:c.landmarks_){
 			if (lm.numDetections_ != lm.pPoint->edges().size() ){
-								printDA(c);
+								//printDA(c);
 								assert(0);
 							}
 
@@ -2546,14 +2632,14 @@ void print_map(const MapType & m)
 					}
 				}
 				expectedWeightChange += std::log(config.PE_) - std::log(1 - config.PE_);
-				/*
+				
 				 std::cout << termcolor::green << "LANDMARK BORN "
 				 << termcolor::reset << " initprob: "
 				 << c.landmarksInitProb_[i] << " numDet "
 				 << c.landmarks_[i].numDetections_ << " numfov: "
 				 << c.landmarks_[i].numFoV_ << "  expectedChange "
 				 << expectedWeightChange << "\n";
-				 */
+				 
 
 				c.landmarks_[i].numDetections_ = 0;
 			}
@@ -2571,24 +2657,56 @@ void print_map(const MapType & m)
 		threadnum = omp_get_thread_num();
 #endif
 
+		
 		if (c.tomerge_.size() == 0)
 		{
 			std::cout << termcolor::blue << "no jumps so no merge \n"
 					  << termcolor::reset;
 			return 0;
 		}
+		int nummerge=1;
+		
+		//std::cout  << termcolor::red << "nummerge: " << nummerge << "\n" << termcolor::reset;
+		for(int i=0; i< nummerge ; i++){
+
+		if (c.tomerge_.size() == 0)
+			{
+				return 0;
+			}
+
 		boost::uniform_int<> random_pair(0, c.tomerge_.size() - 1);
 
 		int rp = random_pair(rfs::randomGenerators_[threadnum]);
-
 		int todelete = c.tomerge_[rp].first;
+
 		int toAddMeasurements = c.tomerge_[rp].second;
 
-		for (int k = minpose_; k < maxpose_; k++)
+		
+
+		if (c.landmarks_[toAddMeasurements - c.landmarks_[0].pPoint->id()].numDetections_ <  c.landmarks_[todelete - c.landmarks_[0].pPoint->id()].numDetections_ ){
+			todelete = c.tomerge_[rp].second;
+			toAddMeasurements = c.tomerge_[rp].first;
+		}
+		 auto &del_lm = c.landmarks_[todelete - c.landmarks_[0].pPoint->id()];
+		 auto &add_lm = c.landmarks_[toAddMeasurements - c.landmarks_[0].pPoint->id()];
+		 if (del_lm.numDetections_ ==0 ){
+			continue;
+		 }
+
+		for (int k = 0; k < maxpose_; k++)
 		{
 			auto it = c.DA_bimap_[k].right.find(todelete);
+			auto itadd = c.DA_bimap_[k].right.find(toAddMeasurements);
+
 			if (it != c.DA_bimap_[k].right.end())
 			{
+				if (itadd != c.DA_bimap_[k].right.end()){
+					c.DA_bimap_[k].right.erase(it);
+					c.landmarks_[todelete - c.landmarks_[0].pPoint->id()].numDetections_--;
+					assert(c.landmarks_[todelete - c.landmarks_[0].pPoint->id()].numDetections_ >= 0);
+					continue;
+				}
+
 				for (int l = 0; l < c.DAProbs_[k][it->second].i.size(); l++)
 				{
 					if (c.DAProbs_[k][it->second].i[l] == it->first)
@@ -2602,7 +2720,11 @@ void print_map(const MapType & m)
 				assert(c.landmarks_[todelete - c.landmarks_[0].pPoint->id()].numDetections_ >= 0);
 				c.landmarks_[toAddMeasurements - c.landmarks_[0].pPoint->id()].numDetections_++;
 
-				c.DA_bimap_[k].right.replace_key(it, toAddMeasurements);
+				bool result = c.DA_bimap_[k].right.replace_key(it, toAddMeasurements);
+				if (!result){
+
+					std::cerr << termcolor::red  << "key not replaced\n"<< termcolor::reset;
+				}
 			}
 		}
 		if (c.landmarks_[todelete - c.landmarks_[0].pPoint->id()].numDetections_ != 0)
@@ -2610,6 +2732,14 @@ void print_map(const MapType & m)
 			std::cerr << "landmark  numDetections_ not zero"
 					  << c.landmarks_[todelete - c.landmarks_[0].pPoint->id()].numDetections_
 					  << "\n";
+		}
+
+		for (int n=0; n <c.tomerge_.size(); n++){
+			if (c.tomerge_[n].first == todelete || c.tomerge_[n].second == todelete || c.tomerge_[n].first == toAddMeasurements || c.tomerge_[n].second == toAddMeasurements){
+				c.tomerge_[n] = c.tomerge_[c.tomerge_.size()-1];
+				c.tomerge_.pop_back();
+			}
+		}
 		}
 		c.tomerge_.clear();
 		return expectedWeightChange;
@@ -2699,6 +2829,7 @@ void print_map(const MapType & m)
 		threadnum = omp_get_thread_num();
 #endif
 
+		c.tomerge_.clear();
 		AssociationProbabilities probs;
 		double expectedWeightChange = 0;
 
@@ -2877,8 +3008,8 @@ void print_map(const MapType & m)
 								auto birth_it2 = c.DA_bimap_[kbirth].right.find(probs.i[sample]); 
 								if (birth_it2 == c.DA_bimap_[kbirth].right.end()){
 									if(lm.numDetections_== lm.numFoV_){
-										std::cout << "adding imposssible det_:\n";
-										printDA(c);
+										std::cout << termcolor::red << "adding imposssible det_:\n" << termcolor::reset;
+										//printDA(c);
 										assert(0);
 									}
 									c.DA_bimap_[kbirth].insert({c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch, probs.i[sample] });
@@ -2963,18 +3094,18 @@ void print_map(const MapType & m)
 
 				for (int lm = 0; lm < c.landmarks_.size(); lm++)
 				{
-					
-					if (c.landmarks_[lm].numDetections_ >0 || (c.landmarks_[lm].birthTime_ <= c.poses_[k].stamp )){
-
-						if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
+					if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
 													config.viewingCosLimit_, config.g2o_cam_params))
 						{
+						if (c.landmarks_[lm].numDetections_ >0 || (c.landmarks_[lm].birthTime_ <= c.poses_[k].stamp )){
+
+						
 								c.poses_[k].fov_.push_back(c.landmarks_[lm].pPoint->id());
-								c.landmarks_[lm].numFoV_++;
 								c.landmarks_[lm].is_in_fov_.push_back(k);
 
 							
 						}
+								c.landmarks_[lm].numFoV_++;
 					}
 				}
 			}
@@ -3063,7 +3194,7 @@ void print_map(const MapType & m)
 					StereoMeasurementEdge  &z = *c.poses_[k].Z_[nz];
 
 						auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
-				
+						int dist = ORBDescriptor::distance(lm.descriptor, c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
 						p += lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
 						if (p < -80){
 							continue;
@@ -3086,22 +3217,28 @@ void print_map(const MapType & m)
 						}
 
 						// if pose is not fixed, calc updated pose and lm
-						if (!c.poses_[k].pPose->fixed())
+						if (false && !c.poses_[k].pPose->fixed())
 						{
-							PointType::HessianBlockType::PlainMatrix h;
-							PointType::HessianBlockType pointHessian(h.data());
+							PointType::HessianBlockType::PlainMatrix pointHessian;
+							//PointType::HessianBlockType pointHessian(h.data());
 
 							if (c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].numDetections_ > 0)
 							{
-								assert(c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData()!=NULL);
-								new (&pointHessian) PointType::HessianBlockType(
-									c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
+								// assert(c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData()!=NULL);
+								// new (&pointHessian) PointType::HessianBlockType(
+								// 	c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
+								for (int i= 0; i < pointHessian.rows(); i++){
+									for (int j; j< pointHessian.cols() ;j++){
+										pointHessian(i,j) = lm.pPoint->hessian(i,j);
+									}
+								}
+								//h = lm.pPoint->hessian();
 
 								// std::cout << "g2o pointH: " << pointHessian << "\n\n\n";
 							}
 							else
 							{
-								h = config.anchorInfo_;
+								pointHessian = config.anchorInfo_;
 								// std::cout << "calc pointH: " << pointHessian << "\n\n\n";
 							}
 							// std::cout << "numdetections:  " << c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].numDetections_  << "\n";
@@ -3150,14 +3287,31 @@ void print_map(const MapType & m)
 								lltofH(
 									H);
 							sol = lltofH.solve(b);
+							double poseh_det=poseHessianCopy.determinant();
+							double pointh_det=pointHessian.determinant();
+							double updated_det=lltofH.matrixL().determinant();
+							assert(poseh_det>0);
+							assert(pointh_det>0);
+							assert(updated_det>0);
+							// double increase = std::log(updated_det) - (std::log(poseh_det)+std::log(pointh_det));
 
-							p += std::log(
-														  poseHessianCopy.determinant()) +
-													  std::log(pointHessian.determinant()) - std::log(lltofH.matrixL().determinant());
+							// p += increase;
+							// if (increase > 0){
+							// 	assert(!isnan(p));
+							// }
 							assert(!isnan(p));
-							p += std::log(
-														  c.poses_[k].Z_[nz]->information().determinant()) +
-													  posHLogDet;
+							double increase = std::log( c.poses_[k].Z_[nz]->information().determinant()) ;
+							p += increase;
+							if (increase > 0){
+								assert(!isnan(p));
+							}
+							//increase = posHLogDet;
+
+							// if (increase > 0){
+							// 	assert(!isnan(p));
+							// }
+
+							// p += increase;
 							assert(!isnan(p));
 
 							p += -0.5 * (c.poses_[k].Z_[nz]->chi2() - sol.dot(b));
