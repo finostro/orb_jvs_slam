@@ -1974,7 +1974,7 @@ void print_map(const MapType & m)
 			c.optimizer_->setVerbose(false);
 			//std::cout  << "optimizing \n";
 			//c.optimizer_->save("initial.g2o");
-			int niterations = c.optimizer_->optimize(ni);
+			int niterations = c.optimizer_->optimize(1);
 			//assert(niterations > 0);
 			perturbTraj(c);
 			//std::cout  << "optimized \n";
@@ -2163,7 +2163,7 @@ void print_map(const MapType & m)
 			auto pair = std::make_pair(c.DA_bimap_, to_insert);
 
 			for ( int numpose =1 ; numpose < maxpose_; numpose++){
-				double dist = (c.poses_[numpose].pPose->estimate().translation()-c.poses_[numpose-1].pPose->estimate().translation()).norm();
+				double dist = (c.poses_[numpose].pPose->estimate().inverse().translation()-c.poses_[numpose-1].pPose->estimate().inverse().translation()).norm();
 				if (dist>0.1){
 					std::cout << termcolor::red << "dist to high setting w to -inf"  << "\n";
 					std::cout << "chi2 " << c.odometries_[numpose-1]->chi2() << "\n";
@@ -2235,7 +2235,7 @@ void print_map(const MapType & m)
 						std::cout << termcolor::yellow << "========== piblishingmarkers:"
 								  << bestWeight_ << " ============\n"
 								  << termcolor::reset;
-						perturbTraj(c);
+						//perturbTraj(c);
 						publishMarkers(c);
 					}
 
@@ -3094,18 +3094,17 @@ void print_map(const MapType & m)
 
 				for (int lm = 0; lm < c.landmarks_.size(); lm++)
 				{
-					if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
+
+					if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[k].stamp))
+					{
+						if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
 													config.viewingCosLimit_, config.g2o_cam_params))
 						{
-						if (c.landmarks_[lm].numDetections_ >0 || (c.landmarks_[lm].birthTime_ <= c.poses_[k].stamp )){
 
-						
-								c.poses_[k].fov_.push_back(c.landmarks_[lm].pPoint->id());
-								c.landmarks_[lm].is_in_fov_.push_back(k);
-
-							
+							c.poses_[k].fov_.push_back(c.landmarks_[lm].pPoint->id());
+							c.landmarks_[lm].is_in_fov_.push_back(k);
+							c.landmarks_[lm].numFoV_++;
 						}
-								c.landmarks_[lm].numFoV_++;
 					}
 				}
 			}
