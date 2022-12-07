@@ -3,25 +3,26 @@ MeasurementLikelihoodThreshold:  100.0
 
 lmExistenceProb: 0.01
 
-minframe: 60
+minframe: 250
 maxframe: 3000
 staticframes: 70
 
-PE: 1e-40
+PE: 1e-350
+logExistenceOdds: -1000
 PD: 0.8
 numIterations: 2000
 numGibbs: 25
 numLandmarks: 100
 numComponents: 14
 maxRange: 5
-numLevenbergIterations: 10
+numLevenbergIterations: 15
 tempFactor: 0.995
 initTemp: 1
 birthDeathNumIter: 2
 crossoverNumIter: 13300 
 numPosesToOptimize: 60
 
-perturbTrans: 0.00051
+perturbTrans: 0.001
 perturbRot: 0.005
 
 
@@ -47,10 +48,10 @@ odomInfo:
 stereoInfo:
     rows: 3
     cols: 3
-    data: [1.5 , 0.0 , 0.0 ,
-    0.0 , 1.50 , 0.0 ,
-    0.0 , 0.0 , 1.50 ]
-logKappa: -200.0
+    data: [0.5 , 0.0 , 0.0 ,
+    0.0 , .50 , 0.0 ,
+    0.0 , 0.0 , .50 ]
+logKappa: -180.0
 
 
 viewingCosLimit: 0.5

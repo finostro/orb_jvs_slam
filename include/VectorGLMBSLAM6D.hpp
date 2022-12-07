@@ -225,7 +225,8 @@ void print_map(const MapType & m)
 
 			double logKappa_; /**< intensity of false alarm poisson model*/
 
-			double PE_; /**<  landmark existence probability*/
+			//double PE_; /**<  landmark existence probability*/
+			double logExistenceOdds; /**<  landmark existence probability*/
 
 			double PD_; /**<  landmark detection probability*/
 
@@ -1250,7 +1251,7 @@ void print_map(const MapType & m)
 			node["MeasurementLikelihoodThreshold"].as<double>();
 		config.lmExistenceProb_ = node["lmExistenceProb"].as<double>();
 		config.logKappa_ = node["logKappa"].as<double>();
-		config.PE_ = node["PE"].as<double>();
+		config.logExistenceOdds = node["logExistenceOdds"].as<double>();
 		config.PD_ = node["PD"].as<double>();
 		config.maxRange_ = node["maxRange"].as<double>();
 		config.numComponents_ = node["numComponents"].as<int>();
@@ -1684,8 +1685,8 @@ void print_map(const MapType & m)
 						probs.i.push_back(c.DAProbs_[k][nz].i[a]);
 						if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numDetections_ == 1)
 						{
-							likelihood += std::log(config.PE_) - std::log(1 - config.PE_) + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
-							// std::cout <<" single detection: increase:  " << std::log(config.PE_)-std::log(1-config.PE_) + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_) <<"\n";
+							likelihood += config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
+							// std::cout <<" single detection: increase:  " <<logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_) <<"\n";
 							probs.l.push_back(likelihood);
 						}
 						else
@@ -1706,8 +1707,8 @@ void print_map(const MapType & m)
 							if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numDetections_ == 0)
 							{
 								likelihood +=
-									std::log(config.PE_) - std::log(1 - config.PE_) + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
-								// std::cout <<" 0 detection: increase:  " << std::log(config.PE_)-std::log(1-config.PE_) + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_)<<"\n";
+									config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
+								// std::cout <<" 0 detection: increase:  " << logExistenceOdds+ (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_)<<"\n";
 								probs.l.push_back(likelihood);
 							}
 							else
@@ -1944,7 +1945,7 @@ void print_map(const MapType & m)
 			
 			auto &c = components_[i];
 			for (int k=0; k< minpose_;k+=2){
-				if(k%3!=0){
+				if(k%5!=0){
 					for(int nz=0; nz < c.poses_[k].Z_.size();nz++){
 						c.poses_[k].Z_[nz]->setLevel(2);
 					}
@@ -2339,11 +2340,7 @@ void print_map(const MapType & m)
 			bool exists = c.landmarks_[lm].numDetections_ > 0;
 			if (exists)
 			{
-				logw += std::log(config.PE_);
-			}
-			else
-			{
-				logw += std::log(1 - config.PE_);
+				logw += config.logExistenceOdds;
 			}
 		}
 		logw += -0.5 * (c.optimizer_->activeChi2() + c.linearSolver_->_determinant);
@@ -2631,7 +2628,7 @@ void print_map(const MapType & m)
 						}
 					}
 				}
-				expectedWeightChange += std::log(config.PE_) - std::log(1 - config.PE_);
+				expectedWeightChange += config.logExistenceOdds;
 				
 				 std::cout << termcolor::green << "LANDMARK BORN "
 				 << termcolor::reset << " initprob: "
@@ -2764,7 +2761,7 @@ void print_map(const MapType & m)
 				continue;
 			}
 
-			c.landmarksResetProb_[i] = -(c.landmarks_[i].numDetections_) * std::log(config.PD_) - (c.landmarks_[i].numFoV_ - c.landmarks_[i].numDetections_) * std::log(1 - config.PD_) - std::log(config.PE_) + std::log(1 - config.PE_);
+			c.landmarksResetProb_[i] = -(c.landmarks_[i].numDetections_) * std::log(config.PD_) - (c.landmarks_[i].numFoV_ - c.landmarks_[i].numDetections_) * std::log(1 - config.PD_) - config.logExistenceOdds;
 			//c.landmarksResetProb_[i] =( (double)( c.landmarks_[i].numDetections_))/c.landmarks_[i].numFoV_;
 			double det_r =( (double)( c.landmarks_[i].numDetections_))/c.landmarks_[i].numFoV_;
 			double p;
@@ -2802,7 +2799,7 @@ void print_map(const MapType & m)
 						c.DA_bimap_[k].right.erase(it);
 					}
 				}
-				expectedWeightChange += std::log(1 - config.PE_) - std::log(config.PE_);
+				expectedWeightChange +=-config.logExistenceOdds;
 				expectedWeightChange += -std::log(1 - config.PD_) * c.landmarks_[i].numFoV_;
 				/*
 				 std::cout << termcolor::red << "KILL LANDMARK\n" << termcolor::reset
@@ -2834,7 +2831,7 @@ void print_map(const MapType & m)
 		double expectedWeightChange = 0;
 
 		std::fill(c.landmarksResetProb_.begin(), c.landmarksResetProb_.end(),
-				  std::log(1 - config.PE_) - std::log(config.PE_));
+				  -config.logExistenceOdds);
 		std::fill(c.landmarksInitProb_.begin(), c.landmarksInitProb_.end(), 0.0);
 		for (int k = minpose_; k < maxpose_; k++)
 		{
@@ -2878,8 +2875,8 @@ void print_map(const MapType & m)
 						probs.i.push_back(c.DAProbs_[k][nz].i[a]);
 						if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numDetections_ == 1)
 						{
-							likelihood += std::log(config.PE_) - std::log(1 - config.PE_) + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
-							// std::cout <<" single detection: increase:  " << std::log(config.PE_)-std::log(1-config.PE_) + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_) <<"\n";
+							likelihood += config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
+							// std::cout <<" single detection: increase:  " << config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_) <<"\n";
 							probs.l.push_back(likelihood);
 						}
 						else
@@ -2903,8 +2900,8 @@ void print_map(const MapType & m)
 								if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].birthTime_ < c.poses_[k].stamp
 								&& c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].birthTime_ > c.poses_[k].stamp-1.0){
 									likelihood +=
-										std::log(config.PE_) - std::log(1 - config.PE_) + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
-									// std::cout <<" 0 detection: increase:  " << std::log(config.PE_)-std::log(1-config.PE_) + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_)<<"\n";
+										config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
+									// std::cout <<" 0 detection: increase:  " << config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_)<<"\n";
 									probs.i.push_back(c.DAProbs_[k][nz].i[a]);
 									probs.l.push_back(likelihood);
 									if (likelihood > maxprob)
@@ -3585,7 +3582,7 @@ void print_map(const MapType & m)
 				initStereoEdge(c.poses_[k], nz);
 				cam_unproject(*c.poses_[k].Z_[nz], c.poses_[k].point_camera_frame[nz]);
 		
-				if (k%10==0){
+				if (k%15==0){
 					if (initMapPoint(c.poses_[k], nz, lm, edgeid))
 					{
 						edgeid++;
