@@ -3,7 +3,7 @@ MeasurementLikelihoodThreshold:  100.0
 
 lmExistenceProb: 0.01
 
-minframe: 250
+minframe: 60
 maxframe: 3000
 staticframes: 70
 
@@ -11,14 +11,14 @@ PE: 1e-350
 logExistenceOdds: -1000
 PD: 0.8
 numIterations: 2000
-numGibbs: 25
+numGibbs: 50
 numLandmarks: 100
 numComponents: 14
 maxRange: 5
 numLevenbergIterations: 15
 tempFactor: 0.995
 initTemp: 1
-birthDeathNumIter: 2
+birthDeathNumIter: 2000
 crossoverNumIter: 13300 
 numPosesToOptimize: 60
 
@@ -48,16 +48,16 @@ odomInfo:
 stereoInfo:
     rows: 3
     cols: 3
-    data: [0.5 , 0.0 , 0.0 ,
-    0.0 , .50 , 0.0 ,
-    0.0 , 0.0 , .50 ]
-logKappa: -180.0
+    data: [1.5 , 0.0 , 0.0 ,
+    0.0 , 1.50 , 0.0 ,
+    0.0 , 0.0 , 1.50 ]
+logKappa: -120.0
 
 
 viewingCosLimit: 0.5
 use_gui: true
-eurocFolder: /home/finostro/euroc_dataset/V2_01_easy
-eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V201.txt
+eurocFolder: /media/finostro/ssd_linux/euroc_dataset/V2_01_easy
+eurocTimestampsFilename: /media/finostro/ssd_linux/euroc_dataset/EuRoC_TimeStamps/V201.txt
 stereo_init_max_depth: 60.0
 
 base_link_to_cam0:
@@ -110,7 +110,7 @@ camera_params:
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-ORBextractor.nFeatures: 200
+ORBextractor.nFeatures: 100
 
 # ORB Extractor: Scale factor between levels in the scale pyramid 	
 ORBextractor.scaleFactor: 1.2

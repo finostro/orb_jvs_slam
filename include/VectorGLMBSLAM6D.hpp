@@ -121,20 +121,26 @@ namespace rfs
 			return x.left < y.left;
 		}
 	};
+	struct StampedPose{
+		double stamp;
+		g2o::SE3Quat pose;
+	};
 
 	struct TrajectoryWeight{
 		double weight;
-		std::vector<g2o::SE3Quat> trajectory;
+		std::vector<StampedPose> trajectory;
 
-    void loadTUM(std::string filename, g2o::SE3Quat base_link_to_cam0_se3){
+    void loadTUM(std::string filename, g2o::SE3Quat base_link_to_cam0_se3, double initstamp){
 		std::ifstream file;
 		file.open(filename);
 		std::string line;
 		double t;
-		g2o::SE3Quat pose;
+		StampedPose stampedPose;
+		StampedPose initPose;
+		initPose.stamp = -std::numeric_limits<double>::infinity();
 		while (file.good() && !file.eof()){
 			//std::cout << "read line\n";
-			file >> t;
+			file >> stampedPose.stamp;
 			Eigen::Vector3d t;
 			file >> t[0];
 			file >> t[1];
@@ -144,14 +150,20 @@ namespace rfs
 			file >> q.y();
 			file >> q.z();
 			file >> q.w();
-			pose.setTranslation(t);
-			pose.setRotation(q);
-			pose = pose*base_link_to_cam0_se3;
-			trajectory.push_back(pose);
+			stampedPose.pose.setTranslation(t);
+			stampedPose.pose.setRotation(q);
+			stampedPose.pose = stampedPose.pose*base_link_to_cam0_se3;
+			trajectory.push_back(stampedPose);
+
+
+			if (abs(stampedPose.stamp-initstamp) < abs(initPose.stamp-initstamp) ){
+				initPose = stampedPose;
+			}
 		}
-		g2o::SE3Quat init_pose = trajectory[0];
+		//std::cout << termcolor::magenta << "mindiff: " <<abs(initPose.stamp-initstamp)  << "\n" << termcolor::reset;
+		//initPose = trajectory[0];
 		for(auto &p:trajectory){
-			p = init_pose.inverse() * p ;
+			p.pose = initPose.pose.inverse() * p.pose ;
 		}
 
 	}
@@ -429,7 +441,14 @@ void print_map(const MapType & m)
 		 * Use the probabilities calculated using updateDAProbs to sample a new data association through gibbs sampling
 		 * @param c the GLMB component
 		 */
-		double sampleDA(VectorGLMBComponent6D &c);
+		double sampleDA(VectorGLMBComponent6D &c);	
+		
+		/**
+		 * Use the probabilities calculated using updateDAProbs to sample a new data association through gibbs sampling
+		 * sample for each existing landmark instead of measurement
+		 * @param c the GLMB component
+		 */
+		double reverseSampleDA(VectorGLMBComponent6D &c);
 
 		/**
 		 * Merge two data associations into a third one, by selecting a random merge time.
@@ -549,6 +568,7 @@ void print_map(const MapType & m)
 			visited_;
 		
 		TrajectoryWeight gt_traj;
+		double startingStamp;
 		double temp_;
 		int minpose_ = 0; /**< sample data association from this pose  onwards*/
 		int maxpose_ = 2; /**< optimize only up to this pose */
@@ -671,6 +691,7 @@ void print_map(const MapType & m)
 		}
 		map_cloud->width = numlm;
 		map_cloud->resize(numlm);
+		std::cout << termcolor::green <<" = nlandmarks: " <<numlm << "\n" <<termcolor::reset;
 		//numlm = 0;
 		int nmap=0;
 		for (int i = 0; i < c.landmarks_.size(); i++)
@@ -728,13 +749,13 @@ void print_map(const MapType & m)
 		{
 			gtpath.poses[i].header.stamp = now;
 			gtpath.poses[i].header.frame_id = "map";
-			gtpath.poses[i].pose.position.x = gt_traj.trajectory[i].translation()[0];
-			gtpath.poses[i].pose.position.y = gt_traj.trajectory[i].translation()[1];
-			gtpath.poses[i].pose.position.z = gt_traj.trajectory[i].translation()[2];
-			gtpath.poses[i].pose.orientation.x = gt_traj.trajectory[i].rotation().x();
-			gtpath.poses[i].pose.orientation.y = gt_traj.trajectory[i].rotation().y();
-			gtpath.poses[i].pose.orientation.z = gt_traj.trajectory[i].rotation().z();
-			gtpath.poses[i].pose.orientation.w = gt_traj.trajectory[i].rotation().w();
+			gtpath.poses[i].pose.position.x = gt_traj.trajectory[i].pose.translation()[0];
+			gtpath.poses[i].pose.position.y = gt_traj.trajectory[i].pose.translation()[1];
+			gtpath.poses[i].pose.position.z = gt_traj.trajectory[i].pose.translation()[2];
+			gtpath.poses[i].pose.orientation.x = gt_traj.trajectory[i].pose.rotation().x();
+			gtpath.poses[i].pose.orientation.y = gt_traj.trajectory[i].pose.rotation().y();
+			gtpath.poses[i].pose.orientation.z = gt_traj.trajectory[i].pose.rotation().z();
+			gtpath.poses[i].pose.orientation.w = gt_traj.trajectory[i].pose.rotation().w();
 		}
 		gt_trajectory_pub.publish(gtpath);
 
@@ -871,9 +892,9 @@ void print_map(const MapType & m)
 			// add data association j to component i
 			changeDA(components_[i], it->first);
 			for(int numpose = 0 ; numpose < components_[i].poses_.size() ; numpose++){
-				components_[i].poses_[numpose].pPose->setEstimate(it->second.trajectory[numpose]);	
+				components_[i].poses_[numpose].pPose->setEstimate(it->second.trajectory[numpose].pose);	
 				if (numpose>0){
-					double dist = (it->second.trajectory[numpose].translation()-it->second.trajectory[numpose-1].translation()).norm();
+					double dist = (it->second.trajectory[numpose].pose.translation()-it->second.trajectory[numpose-1].pose.translation()).norm();
 					assert (dist<0.1);
 				}
 			}
@@ -918,6 +939,7 @@ void print_map(const MapType & m)
 					break;
 			}
 		}
+		startingStamp = vTimestampsCam[0];
 		nImages = vstrImageLeft.size();
 
 		cv::Mat imLeft, imRight;
@@ -1578,7 +1600,8 @@ void print_map(const MapType & m)
 #endif
 
 		boost::uniform_real<> uni_dist(0, 1);
-		int startk = std::max(minpose_ , config.staticframes-config.minframe );
+		int startk = std::max(std::max(minpose_ , config.staticframes-config.minframe ) ,1);
+		
 
 		for(int k = startk ; k < c.poses_.size() ; k++){
 			//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
@@ -1944,13 +1967,13 @@ void print_map(const MapType & m)
 
 			
 			auto &c = components_[i];
-			for (int k=0; k< minpose_;k+=2){
-				if(k%5!=0){
-					for(int nz=0; nz < c.poses_[k].Z_.size();nz++){
-						c.poses_[k].Z_[nz]->setLevel(2);
-					}
-				}
-			}
+			// for (int k=0; k< minpose_;k+=2){
+			// 	if(k%5!=0){
+			// 		for(int nz=0; nz < c.poses_[k].Z_.size();nz++){
+			// 			c.poses_[k].Z_[nz]->setLevel(2);
+			// 		}
+			// 	}
+			// }
 			for(int k = 1; k< maxpose_ ; k++){
 				c.odometries_[k-1]->setLevel(0);
 			}
@@ -2155,10 +2178,10 @@ void print_map(const MapType & m)
 			to_insert.weight = c.logweight_;
 			to_insert.trajectory.resize(c.poses_.size() );
 			for(int numpose =0; numpose< maxpose_; numpose++){
-				to_insert.trajectory[numpose]=c.poses_[numpose].pPose->estimate();
+				to_insert.trajectory[numpose].pose=c.poses_[numpose].pPose->estimate();
 			}
 			for(int numpose = maxpose_; numpose< c.poses_.size(); numpose++){
-				to_insert.trajectory[numpose]=c.poses_[maxpose_-1].pPose->estimate();
+				to_insert.trajectory[numpose].pose=c.poses_[maxpose_-1].pPose->estimate();
 				c.poses_[numpose].pPose->setEstimate(c.poses_[maxpose_-1].pPose->estimate());
 			}
 			auto pair = std::make_pair(c.DA_bimap_, to_insert);
@@ -2294,7 +2317,9 @@ void print_map(const MapType & m)
 	inline void VectorGLMBSLAM6D::calculateWeight(VectorGLMBComponent6D &c)
 	{
 		double logw = 0;
-
+		double pd_logw =0;
+		double kappa_logw =0;
+		double info_logw =0;
 		for (int k = 0; k < c.poses_.size(); k++)
 		{
 			for (int nz = 0; nz < c.poses_[k].Z_.size(); nz++)
@@ -2307,11 +2332,11 @@ void print_map(const MapType & m)
 				}
 				if (selectedDA < 0)
 				{
-					logw += config.logKappa_;
+					kappa_logw += config.logKappa_;
 				}
 				else
 				{
-					logw +=
+					info_logw +=
 						-0.5 * (c.poses_[k].Z_[nz]->dimension() * std::log(2 * M_PI) - std::log(
 																						   c.poses_[k].Z_[nz]->information().determinant()));
 				}
@@ -2322,29 +2347,36 @@ void print_map(const MapType & m)
 
 				if (c.DA_bimap_[k].right.count(c.poses_[k].fov_[lm]) > 0)
 				{
-					logw += std::log(config.PD_);
+					pd_logw += std::log(config.PD_);
 				}
 				else
 				{
 					bool exists = c.landmarks_[c.poses_[k].fov_[lm] - c.landmarks_[0].pPoint->id()].numDetections_ > 0;
 					if (exists)
 					{
-						logw += std::log(1 - config.PD_);
+						pd_logw += std::log(1 - config.PD_);
 					}
 				}
 			}
 		}
-
+		logw += pd_logw;
+		logw += kappa_logw;
+		logw += info_logw;
+		double lm_exist_w=0;
 		for (int lm = 0; lm < c.landmarks_.size(); lm++)
 		{
 			bool exists = c.landmarks_[lm].numDetections_ > 0;
 			if (exists)
 			{
-				logw += config.logExistenceOdds;
+				lm_exist_w += config.logExistenceOdds;
 			}
 		}
-		logw += -0.5 * (c.optimizer_->activeChi2() + c.linearSolver_->_determinant);
-		// std::cout << termcolor::blue << "weight: " <<logw << " det: " <<     c.linearSolver_->_determinant      <<termcolor::reset <<"\n";
+		logw += lm_exist_w;
+		double chi_logw=-0.5 * (c.optimizer_->activeChi2());
+		double det_logw = -0.5* c.linearSolver_->_determinant;
+
+		logw += chi_logw+det_logw;
+		 std::cout << termcolor::blue << "weight: " <<logw << " det_logw: " <<     det_logw  << " pd_logw: " <<     pd_logw  << " kappa_logw: " <<     kappa_logw  << " info_logw: " <<     info_logw << " lm_exist_w: " <<     lm_exist_w << "\n"      <<termcolor::reset <<"\n";
 		assert(!isnan(logw));
 		c.prevLogWeight_ = c.logweight_;
 		c.logweight_ = logw;
@@ -2604,6 +2636,8 @@ void print_map(const MapType & m)
 				int numdet = 0;
 				for (int k = minpose_; k < maxpose_; k++)
 				{
+					double maxl = -std::numeric_limits<double>::infinity();
+					int max_nz = -5;
 					for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
 					{
 						// if measurement is associated, continue
@@ -2616,17 +2650,20 @@ void print_map(const MapType & m)
 						{
 							if (c.DAProbs_[k][nz].i[a] == c.landmarks_[i].pPoint->id())
 							{
-								if (c.DAProbs_[k][nz].l[a] > c.DAProbs_[k][nz].l[c.DAProbs_[k][nz].l.size() - 1])
+								if (c.DAProbs_[k][nz].l[a] > c.DAProbs_[k][nz].l[0] && c.DAProbs_[k][nz].l[a] > maxl)
 								{
-									c.DA_bimap_[k].insert(
-										{nz, c.landmarks_[i].pPoint->id()});
-									c.landmarks_[i].numDetections_++;
-									expectedWeightChange +=
-										c.DAProbs_[k][nz].l[a] - c.DAProbs_[k][nz].l[c.DAProbs_[k][nz].l.size() - 1];
+									maxl = c.DAProbs_[k][nz].l[a];
+									max_nz = nz;
 								}
 							}
 						}
 					}
+					if (max_nz>=0){
+						c.DA_bimap_[k].insert( {max_nz, c.landmarks_[i].pPoint->id()});
+						expectedWeightChange += maxl - config.logKappa_;
+						c.landmarks_[i].numDetections_++;
+					}
+
 				}
 				expectedWeightChange += config.logExistenceOdds;
 				
@@ -2638,7 +2675,7 @@ void print_map(const MapType & m)
 				 << expectedWeightChange << "\n";
 				 
 
-				c.landmarks_[i].numDetections_ = 0;
+				//c.landmarks_[i].numDetections_ = 0;
 			}
 		}
 
@@ -2815,6 +2852,25 @@ void print_map(const MapType & m)
 
 		// std::cout << "Death Change  " <<expectedWeightChange <<"\n";
 		return expectedWeightChange;
+	}
+	inline double VectorGLMBSLAM6D::reverseSampleDA(VectorGLMBComponent6D &c){
+		std::vector<double> P;
+		boost::uniform_real<> uni_dist(0, 1);
+		int threadnum = 0;
+#ifdef _OPENMP
+		threadnum = omp_get_thread_num();
+#endif
+
+		c.tomerge_.clear();
+		AssociationProbabilities probs;
+		double expectedWeightChange = 0;
+		for (int k = minpose_; k < maxpose_; k++)
+		{
+			
+		}
+
+
+
 	}
 
 	inline double VectorGLMBSLAM6D::sampleDA(VectorGLMBComponent6D &c)
@@ -3093,6 +3149,7 @@ void print_map(const MapType & m)
 				{
 
 					if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[k].stamp))
+					//if ( (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp))
 					{
 						if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
 													config.viewingCosLimit_, config.g2o_cam_params))
@@ -3184,17 +3241,20 @@ void print_map(const MapType & m)
 				c.DAProbs_[k][nz].i.push_back(-5);
 				c.DAProbs_[k][nz].l.push_back(config.logKappa_);
 
+				double avg_desc_likelihood = 0;
+
 				for(auto lmidx:c.poses_[k].fov_){
 
 					double p=0.0;
 					StereoMeasurementEdge  &z = *c.poses_[k].Z_[nz];
 
 						auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
-						int dist = ORBDescriptor::distance(lm.descriptor, c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
-						p += lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
-						if (p < -80){
+						//int dist = ORBDescriptor::distance(lm.descriptor, c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
+						double desclikelihood = lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
+						if (desclikelihood < -100*1.0){
 							continue;
 						}
+						p += desclikelihood;
 
 						p += std::log(config.PD_) - std::log(1 - config.PD_);
 						c.poses_[k].Z_[nz]->setVertex(0, lm.pPoint);
@@ -3394,8 +3454,14 @@ void print_map(const MapType & m)
 					if (p  > config.logKappa_ - 1000){
 						c.DAProbs_[k][nz].l.push_back(p);
 						c.DAProbs_[k][nz].i.push_back(lmidx);
+						avg_desc_likelihood += desclikelihood;
 					}
 				}
+				avg_desc_likelihood /= c.DAProbs_[k][nz].l.size()-1;
+				for (int nl =1; nl < c.DAProbs_[k][nz].l.size(); nl++){
+					c.DAProbs_[k][nz].l[nl] -= avg_desc_likelihood;
+				}
+
 
 
 
@@ -3441,9 +3507,9 @@ void print_map(const MapType & m)
 		stereo_edge->setMeasurement(uvu);
 
 
-		g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
-		stereo_edge->setRobustKernel(rk);
-		rk->setDelta(sqrt(7.8));
+		// g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
+		// stereo_edge->setRobustKernel(rk);
+		// rk->setDelta(sqrt(7.8));
 
 		pose.Z_[numMatch] = stereo_edge;
 

@@ -126,7 +126,8 @@ struct VectorGLMBComponent6D {
 		file.open(filename);
 		file << std::setprecision(20) ;
 
-		for (auto &pose:poses_){
+		for (int k =0; k<maxpose_; k++){
+			auto &pose =poses_[k];
 			g2o::SE3Quat p = pose.pPose->estimate().inverse()*base_link_to_cam0_se3.inverse();
 			
 			file 	<< pose.stamp << " "
