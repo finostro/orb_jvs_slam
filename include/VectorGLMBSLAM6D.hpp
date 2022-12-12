@@ -2086,7 +2086,11 @@ void print_map(const MapType & m)
 
 				for (int i = 1; i < config.numGibbs_; i++)
 				{
-					expectedChange += sampleDA(c);
+					if(i%2==0){
+						expectedChange += sampleDA(c);
+					}else{
+						 reverseSampleDA(c);
+					}
 
 
 					// if (i%7==0){
@@ -2862,11 +2866,146 @@ void print_map(const MapType & m)
 #endif
 
 		c.tomerge_.clear();
-		AssociationProbabilities probs;
+		//AssociationProbabilities probs;
 		double expectedWeightChange = 0;
-		for (int k = minpose_; k < maxpose_; k++)
-		{
-			
+		for (int k = minpose_; k < maxpose_; k++){
+			for(int lmFovIdx =0; lmFovIdx <c.poses_[k].fov_.size();lmFovIdx++){
+				int lmidx = c.poses_[k].fov_[lmFovIdx];
+
+				auto &lm = c.landmarks_[lmidx-c.landmarks_[0].id];
+
+
+
+				
+				
+					AssociationProbabilities probs;
+					double maxprob = -std::numeric_limits<double>::infinity();
+					int maxprobi = 0;
+
+					double maxlikelihood = -std::numeric_limits<double>::infinity();
+					int maxlikelihoodi = 0;
+
+
+					probs.i.push_back(-5);
+					probs.l.push_back(config.logKappa_);
+
+					if (lm.numDetections_==0 ){
+						if (lm.birthTime_ < c.poses_[k].stamp && lm.birthTime_ > c.poses_[k].stamp-1.0){
+							probs.l[0] += -config.logExistenceOdds - (lm.numFoV_-1) * std::log(1 - config.PD_) ;
+						}else{
+							continue;
+						}
+					}
+
+					int prevDA = -5;
+					auto it = c.DA_bimap_[k].right.find(lm.id);
+					if (it != c.DA_bimap_[k].right.end())
+					{
+						prevDA = it->second;
+					}
+
+
+					if (lm.numDetections_==1 && prevDA >=0){
+						probs.l[0] += -config.logExistenceOdds - (lm.numFoV_-1) * std::log(1 - config.PD_);
+					}
+
+					
+					
+
+
+
+					for (int a = 0; a < c.reverseDAProbs_[k][lmFovIdx].i.size(); a++)
+					{
+						int nz= c.reverseDAProbs_[k][lmFovIdx].i[a];
+						double likelihood = c.reverseDAProbs_[k][lmFovIdx].l[a];
+
+						if (nz == prevDA){
+							
+							probs.i.push_back(c.reverseDAProbs_[k][lmFovIdx].i[a]);
+							probs.l.push_back(likelihood);
+							if (likelihood > maxprob)
+							{
+								maxprob = likelihood;
+								maxprobi = a;
+							}
+
+							
+						}else{
+							if (c.DA_bimap_[k].left.count(nz) == 0)
+							{ // measurement is not already associated to another landmark
+								
+								probs.i.push_back(c.reverseDAProbs_[k][lmFovIdx].i[a]);
+								probs.l.push_back(likelihood);
+								if (likelihood > maxprob)
+								{
+									maxprob = likelihood;
+									maxprobi = a;
+								}
+								
+							}
+						}
+
+					}
+
+				//probs calculated now sampling
+
+				P.resize(probs.l.size());
+				double alternativeprob = 0;
+				for (int i = 0; i < P.size(); i++)
+				{
+
+					P[i] = exp((probs.l[i] - maxprob)); // /temp_);
+
+					// std::cout << p << "   ";
+					alternativeprob += P[i];
+				}
+
+				size_t sample = GibbsSampler::sample(randomGenerators_[threadnum],
+													 P);
+				
+
+				if (probs.i[sample] != prevDA)
+				{ // if selected association, change bimap
+
+					if (probs.i[sample] >= 0)
+					{
+						if (prevDA<0){
+							lm.numDetections_++;
+							c.DA_bimap_[k].insert({ probs.i[sample] ,  lmidx});
+						}
+						else
+						{
+							c.DA_bimap_[k].right.replace_data(it, probs.i[sample]);
+
+						}
+						if (lm.numDetections_>0 ){
+							int kbirth = lm.birthPose->pPose->id();
+							
+							auto birth_it = c.DA_bimap_[kbirth].left.find(c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch);
+							if (birth_it == c.DA_bimap_[kbirth].left.end()){
+								auto birth_it2 = c.DA_bimap_[kbirth].right.find(lmidx); 
+								if (birth_it2 == c.DA_bimap_[kbirth].right.end()){
+									if(lm.numDetections_== lm.numFoV_){
+										std::cout << termcolor::red << "adding imposssible det_:\n" << termcolor::reset;
+										//printDA(c);
+										assert(0);
+									}
+									c.DA_bimap_[kbirth].insert({lm.birthMatch, lmidx });
+									lm.numDetections_++;
+								}
+							}
+						}
+					}
+					else
+					{ // if a change has to be made and new DA is false alarm, we need to remove the association
+						c.DA_bimap_[k].right.erase(it);
+						lm.numDetections_--;
+						assert(lm.numDetections_ >= 0);
+					}
+				}
+
+
+			}
 		}
 
 
@@ -3174,9 +3313,16 @@ void print_map(const MapType & m)
 		StereoMeasurementEdge z;
 		jac_ws.updateSize(2, 3 * 6);
 		jac_ws.allocate();
+		for (int k =0; k< minpose;k++){
+			c.reverseDAProbs_[k].clear();
+			c.DAProbs_[k].clear();
+		}
 
 		for (int k = minpose; k < maxpose; k++)
 		{
+
+			std::fill(c.reverseDAProbs_[k].begin(),c.reverseDAProbs_[k].end(), AssociationProbabilities() );
+			c.reverseDAProbs_[k].resize(c.poses_[k].fov_.size());
 			c.DAProbs_[k].resize(c.poses_[k].Z_.size());
 
 			double posHLogDet;
@@ -3243,8 +3389,8 @@ void print_map(const MapType & m)
 
 				double avg_desc_likelihood = 0;
 
-				for(auto lmidx:c.poses_[k].fov_){
-
+				for(int lmFovIdx =0; lmFovIdx <c.poses_[k].fov_.size();lmFovIdx++){
+					int lmidx = c.poses_[k].fov_[lmFovIdx];
 					double p=0.0;
 					StereoMeasurementEdge  &z = *c.poses_[k].Z_[nz];
 
@@ -3454,6 +3600,9 @@ void print_map(const MapType & m)
 					if (p  > config.logKappa_ - 1000){
 						c.DAProbs_[k][nz].l.push_back(p);
 						c.DAProbs_[k][nz].i.push_back(lmidx);
+						c.reverseDAProbs_[k][lmFovIdx].i.push_back(nz);
+						c.reverseDAProbs_[k][lmFovIdx].l.push_back(p);
+
 						avg_desc_likelihood += desclikelihood;
 					}
 				}
@@ -3681,6 +3830,7 @@ void print_map(const MapType & m)
 		c.prevDA_bimap_ = c.DA_bimap_;
 
 		c.DAProbs_.resize(c.numPoses_);
+		c.reverseDAProbs_.resize(c.numPoses_);
 	}
 
 	bool VectorGLMBSLAM6D::cam_unproject(const StereoMeasurementEdge &measurement,

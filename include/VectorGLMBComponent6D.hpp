@@ -69,7 +69,7 @@ struct AssociationProbability {
 	double l; /**< log probability of association*/
 };
 struct AssociationProbabilities {
-	std::vector<int> i; /**< index of a landmark */
+	std::vector<int> i; /**< index of a landmark , index of measurement in reverse form*/
 	std::vector<double> l; /**< log probability of association*/
 };
 
@@ -103,6 +103,7 @@ struct VectorGLMBComponent6D {
 
 	std::vector<std::vector<AssociationProbabilities> > DAProbs_; /**< DAProbs_ [k][nz] are is the association probabilities of measurement
 	 nz at time k, used for switching using gibbs sampling*/
+	std::vector<std::vector<AssociationProbabilities> > reverseDAProbs_; /**< same as before but from landmarks to measurements*/ 
 
 	std::vector<OrbslamPose> poses_;
 	std::vector<OdometryEdge *> odometries_;
