@@ -199,9 +199,9 @@ void print_map(const MapType & m)
 	}
 	inline double dist2loglikelihood(int d){
 		double dd=d/255.0;
-		static constexpr double a = std::log(1.0/8.0);
-		static constexpr double b = std::log(7.0/8.0);
-		static constexpr double c = std::log(1.0/2.0);
+		static  double a = std::log(1.0/8.0);
+		static  double b = std::log(7.0/8.0);
+		static  double c = std::log(1.0/2.0);
 		double ret =14.0+20.0*(dd*a+(1-dd)*b+c);
 		return  ret;
 	}
@@ -496,6 +496,11 @@ void print_map(const MapType & m)
 		 * @param c the GLMB component
 		 */
 		void checkGraph(VectorGLMBComponent6D &c, std::ostream &s = std::cout);
+		/**
+		 * Check g2o graph is consistent
+		 * @param c the GLMB component
+		 */
+		void checkNumDet(VectorGLMBComponent6D &c, std::ostream &s = std::cout);
 		/**
 		 * print the data association in component c
 		 * @param c the GLMB component
@@ -895,7 +900,7 @@ void print_map(const MapType & m)
 				components_[i].poses_[numpose].pPose->setEstimate(it->second.trajectory[numpose].pose);	
 				if (numpose>0){
 					double dist = (it->second.trajectory[numpose].pose.translation()-it->second.trajectory[numpose-1].pose.translation()).norm();
-					assert (dist<0.1);
+					//assert (dist<0.1);
 				}
 			}
 			components_[i].logweight_ = it->second.weight;
@@ -2007,7 +2012,9 @@ void print_map(const MapType & m)
 
 			moveBirth(c);
 			checkGraph(c);
+			//checkNumDet(c);
 			updateFoV(c);
+			checkNumDet(c);
 			checkGraph(c);
 			//std::cout  << "optimizing \n";
 			// if (!c.optimizer_->verifyInformationMatrices(true)){
@@ -2084,12 +2091,13 @@ void print_map(const MapType & m)
 
 				}
 
-				for (int i = 1; i < config.numGibbs_; i++)
+				for (int ng = 1; ng < config.numGibbs_; ng++)
 				{
-					if(i%2==0){
+					if(ng%2==0){
 						expectedChange += sampleDA(c);
 					}else{
-						 reverseSampleDA(c);
+						//reverseSampleDA(c);
+						expectedChange += sampleDA(c);
 					}
 
 
@@ -2202,7 +2210,7 @@ void print_map(const MapType & m)
 				}
 				
 
-				assert (dist<0.1);
+				//assert (dist<0.1);
 			}
 			
 			std::cout << termcolor::blue << "========== current:"
@@ -2590,6 +2598,23 @@ void print_map(const MapType & m)
 			}
 		}
 	}
+	inline void VectorGLMBSLAM6D::checkNumDet(VectorGLMBComponent6D &c,
+										  std::ostream &s)
+	{
+		for (auto &lm:c.landmarks_){
+			int numdet=0;
+			for(int k=0;k< maxpose_;k++){
+				auto it = c.DA_bimap_[k].right.find(lm.id);
+				if (it != c.DA_bimap_[k].right.end()){
+					numdet++;
+
+				}
+
+			}
+			assert(numdet==lm.numDetections_);
+		}
+	}	
+	
 	inline void VectorGLMBSLAM6D::checkGraph(VectorGLMBComponent6D &c,
 										  std::ostream &s)
 	{
@@ -2684,6 +2709,7 @@ void print_map(const MapType & m)
 		}
 
 		// std::cout << "Death Change  " <<expectedWeightChange <<"\n";
+		checkNumDet(c);
 		return expectedWeightChange;
 	}
 
@@ -2780,6 +2806,7 @@ void print_map(const MapType & m)
 		}
 		}
 		c.tomerge_.clear();
+		checkNumDet(c);
 		return expectedWeightChange;
 	}
 
@@ -2854,23 +2881,29 @@ void print_map(const MapType & m)
 			}
 		}
 
+		checkNumDet(c);
 		// std::cout << "Death Change  " <<expectedWeightChange <<"\n";
 		return expectedWeightChange;
 	}
 	inline double VectorGLMBSLAM6D::reverseSampleDA(VectorGLMBComponent6D &c){
-		std::vector<double> P;
-		boost::uniform_real<> uni_dist(0, 1);
+		//checkNumDet(c);
 		int threadnum = 0;
 #ifdef _OPENMP
 		threadnum = omp_get_thread_num();
 #endif
 
-		c.tomerge_.clear();
+		//c.tomerge_.clear();
 		//AssociationProbabilities probs;
 		double expectedWeightChange = 0;
-		for (int k = minpose_; k < maxpose_; k++){
-			for(int lmFovIdx =0; lmFovIdx <c.poses_[k].fov_.size();lmFovIdx++){
-				int lmidx = c.poses_[k].fov_[lmFovIdx];
+		for (unsigned int k = minpose_; k < maxpose_; k++){
+			break;
+			std::cout  << "testk " << k  << " maxpose " << maxpose_ << "\n";
+			if(k>=maxpose_){
+				break;
+			}
+			std::cout  << "testk " << k << "\n";
+			for(int lmFovIdx =0; lmFovIdx <c.poses_.at(k).fov_.size();lmFovIdx++){
+				int lmidx = c.poses_.at(k).fov_.at(lmFovIdx);
 
 				auto &lm = c.landmarks_[lmidx-c.landmarks_[0].id];
 
@@ -2878,16 +2911,15 @@ void print_map(const MapType & m)
 
 				
 				
+					std::vector<double> P;
 					AssociationProbabilities probs;
-					double maxprob = -std::numeric_limits<double>::infinity();
-					int maxprobi = 0;
 
-					double maxlikelihood = -std::numeric_limits<double>::infinity();
-					int maxlikelihoodi = 0;
+
 
 
 					probs.i.push_back(-5);
 					probs.l.push_back(config.logKappa_);
+
 
 					if (lm.numDetections_==0 ){
 						if (lm.birthTime_ < c.poses_[k].stamp && lm.birthTime_ > c.poses_[k].stamp-1.0){
@@ -2896,6 +2928,8 @@ void print_map(const MapType & m)
 							continue;
 						}
 					}
+
+
 
 					int prevDA = -5;
 					auto it = c.DA_bimap_[k].right.find(lm.id);
@@ -2909,10 +2943,10 @@ void print_map(const MapType & m)
 						probs.l[0] += -config.logExistenceOdds - (lm.numFoV_-1) * std::log(1 - config.PD_);
 					}
 
-					
-					
 
 
+					double maxprob = probs.l[0];
+					int maxprobi = 0;
 
 					for (int a = 0; a < c.reverseDAProbs_[k][lmFovIdx].i.size(); a++)
 					{
@@ -2971,26 +3005,30 @@ void print_map(const MapType & m)
 					{
 						if (prevDA<0){
 							lm.numDetections_++;
-							c.DA_bimap_[k].insert({ probs.i[sample] ,  lmidx});
+							auto result = c.DA_bimap_[k].insert({ probs.i[sample] ,  lmidx});
+
+							assert(result.second);
 						}
 						else
 						{
-							c.DA_bimap_[k].right.replace_data(it, probs.i[sample]);
+							bool result = c.DA_bimap_[k].right.replace_data(it, probs.i[sample]);
+							assert(result);
 
 						}
 						if (lm.numDetections_>0 ){
 							int kbirth = lm.birthPose->pPose->id();
 							
-							auto birth_it = c.DA_bimap_[kbirth].left.find(c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch);
+							auto birth_it = c.DA_bimap_[kbirth].left.find(lm.birthMatch);
 							if (birth_it == c.DA_bimap_[kbirth].left.end()){
 								auto birth_it2 = c.DA_bimap_[kbirth].right.find(lmidx); 
 								if (birth_it2 == c.DA_bimap_[kbirth].right.end()){
 									if(lm.numDetections_== lm.numFoV_){
 										std::cout << termcolor::red << "adding imposssible det_:\n" << termcolor::reset;
-										//printDA(c);
+										printDA(c);
 										assert(0);
 									}
-									c.DA_bimap_[kbirth].insert({lm.birthMatch, lmidx });
+									auto result = c.DA_bimap_[kbirth].insert({lm.birthMatch, lmidx });
+									assert(result.second);
 									lm.numDetections_++;
 								}
 							}
@@ -3009,11 +3047,15 @@ void print_map(const MapType & m)
 		}
 
 
+		checkNumDet(c);
+		return 0.0;
 
 	}
 
 	inline double VectorGLMBSLAM6D::sampleDA(VectorGLMBComponent6D &c)
 	{
+
+		checkNumDet(c);
 		std::vector<double> P;
 		boost::uniform_real<> uni_dist(0, 1);
 		int threadnum = 0;
@@ -3178,14 +3220,16 @@ void print_map(const MapType & m)
 						c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].numDetections_++;
 						if (selectedDA < 0)
 						{
-							c.DA_bimap_[k].insert({nz, probs.i[sample]});
+							auto result = c.DA_bimap_[k].insert({nz, probs.i[sample]});
+							assert(result.second);
 						}
 						else
 						{
 
 							c.landmarks_[selectedDA - c.landmarks_[0].pPoint->id()].numDetections_--;
 							assert(c.landmarks_[selectedDA - c.landmarks_[0].pPoint->id()].numDetections_ >= 0);
-							c.DA_bimap_[k].left.replace_data(it, probs.i[sample]);
+							auto result = c.DA_bimap_[k].left.replace_data(it, probs.i[sample]);
+							assert(result);
 
 							// add an log for possible landmark merge
 							c.tomerge_.push_back(
@@ -3204,7 +3248,8 @@ void print_map(const MapType & m)
 										//printDA(c);
 										assert(0);
 									}
-									c.DA_bimap_[kbirth].insert({c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch, probs.i[sample] });
+									auto result = c.DA_bimap_[kbirth].insert({c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch, probs.i[sample] });
+									assert(result.second);
 									c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].numDetections_++;
 								}
 							}
@@ -3220,7 +3265,9 @@ void print_map(const MapType & m)
 
 			}
 		}
+		//printDA(c);
 
+		checkNumDet(c);
 		return expectedWeightChange;
 	}
 	inline void VectorGLMBSLAM6D::updateMetaStates(VectorGLMBComponent6D &c)
@@ -3231,7 +3278,7 @@ void print_map(const MapType & m)
 
 				if (map_point.numDetections_ >0){
 					
-					std::vector<int> avg_desc(256);
+					std::vector<int> avg_desc(256,0);
 					map_point.normalVector.setZero();
 
 
@@ -3244,9 +3291,12 @@ void print_map(const MapType & m)
 						assert ( it != c.DA_bimap_[posenum].right.end() );
 						int nz = it->second;
 						auto &desc_left = c.poses_[posenum].descriptors_left[c.poses_[posenum].matches_left_to_right[nz].queryIdx];
-						auto &desc_right = c.poses_[posenum].descriptors_left[c.poses_[posenum].matches_left_to_right[nz].trainIdx];
+						auto &desc_right = c.poses_[posenum].descriptors_right[c.poses_[posenum].matches_left_to_right[nz].trainIdx];
 						for(int i=0;i<256;i++){
-							avg_desc[i] += (int)desc_left.desc[i] + (int)desc_right.desc[i];
+							if (desc_left.desc[i])
+								avg_desc[i]++;
+							if (desc_right.desc[i])
+								avg_desc[i]++;
 						}
 						map_point.normalVector += c.poses_[posenum].point_camera_frame[nz].normalized();
 
@@ -3341,6 +3391,7 @@ void print_map(const MapType & m)
 				//c.DAProbs_[k][nz].i = c.poses_[k].fov_;
 				//prechecking daprobs with descriptor distance
 				c.DAProbs_[k][nz].i.clear();
+				c.DAProbs_[k][nz].l.clear();
 				c.DAProbs_[k][nz].i.reserve(c.poses_[k].fov_.size()+1);
 				// for(auto lmidx:c.poses_[k].fov_){
 				// 	auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];

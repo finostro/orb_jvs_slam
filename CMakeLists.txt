@@ -25,7 +25,7 @@ endif ()
 
 
 
-   SET(CMAKE_BUILD_TYPE Debug )
+SET(CMAKE_BUILD_TYPE Debug )
 
 PROJECT(hglmbslam)
 
@@ -36,11 +36,10 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   visualization_msgs
   sensor_msgs
-  pcl_ros
+  tf2_ros
 )
-find_package(GTSAM REQUIRED)
+#find_package(GTSAM REQUIRED)
 
-find_package(PCL REQUIRED)
 
 ###################################
 ## catkin specific configuration ##
@@ -96,6 +95,9 @@ ENDIF()
 
 # sanitizer
 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   -fsanitize=address  -fno-omit-frame-pointer")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -fsanitize=address  -fno-omit-frame-pointer")
+
 if (USE_SANITIZER STREQUAL "Address")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address  -fno-omit-frame-pointer")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address  -fno-omit-frame-pointer")
@@ -125,19 +127,21 @@ endif()
 FIND_PACKAGE(Perftools)
 IF(Perftools_FOUND)
   IF("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-    SET(USE_CPU_PROFILER ON CACHE BOOL "Use Google Perftools for CPU profiling.")
+    SET(USE_CPU_PROFILER OFF CACHE  BOOL "Use Google Perftools for CPU profiling.")
     SET(USE_HEAP_PROFILER OFF CACHE BOOL "Use Google Perftools for heap profiling.")
   ELSE()
     SET(USE_CPU_PROFILER OFF) # Does not play nice with Clang
     SET(USE_HEAP_PROFILER OFF)
   ENDIF()
   IF(USE_CPU_PROFILER)
+    message("enabling cpu profiler ${USE_CPU_PROFILER}")
     ADD_DEFINITIONS(-D_PERFTOOLS_CPU)
     IF(APPLE)
       SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wl,-no_pie ") # Required due to ASLR
     ENDIF()
   ENDIF()
   IF(USE_HEAP_PROFILER)
+    message("enabling heap profiler ${USE_HEAP_PROFILER}")
     ADD_DEFINITIONS(-D_PERFTOOLS_HEAP)
     IF(APPLE)
       SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wl,-no_pie ") # Required due to ASLR
@@ -151,7 +155,7 @@ ENDIF()
 IF(APPLE AND ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang"))
   SET(USE_OPENMP OFF) # OpenMP does not yet work with Clang, but hopefully soon
 ELSE()
-  SET(USE_OPENMP ON CACHE BOOL "Use OpenMP to compile multithreaded versions of SLAM algorithms.")
+  SET(USE_OPENMP OFF CACHE BOOL "Use OpenMP to compile multithreaded versions of SLAM algorithms.")
 ENDIF()
 IF(USE_OPENMP)
   IF("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
@@ -168,6 +172,15 @@ set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
 
+
+
+
+# Eigen
+message("looking for eigen")
+FIND_PACKAGE(Eigen3 REQUIRED)
+message("looking for eigen")
+
+find_package(PCL REQUIRED)
 # Boost
 FIND_PACKAGE(Boost REQUIRED COMPONENTS timer chrono system filesystem graph program_options container )
 set(Boost_USE_STATIC_LIBS ON)
@@ -175,8 +188,7 @@ set(Boost_USE_MULTITHREADED ON)
 set(Boost_USE_STATIC_RUNTIME ON)
 
 
-# Eigen
-FIND_PACKAGE(Eigen REQUIRED)
+
 
 # Google Ceres
 
@@ -186,9 +198,10 @@ FIND_PACKAGE(Sophus REQUIRED)
 FIND_PACKAGE(g2o REQUIRED)
 FIND_PACKAGE(CSparse REQUIRED)
 FIND_PACKAGE(yaml-cpp REQUIRED)
-FIND_PACKAGE(Ceres REQUIRED)
+MESSAGE("yaml-cpp: ${YAML_CPP_FOUND}  , ${YAML_CPP_INCLUDE_DIR} , ${YAML_CPP_LIBRARIES}")
 
 
+find_package (glog  REQUIRED)
 #  Opencv
 find_package(OpenCV 4.4)
 if(NOT OpenCV_FOUND)
@@ -200,7 +213,6 @@ MESSAGE(${OpenCV_VERSION})
 
 
 
-
     
 
 
@@ -208,20 +220,43 @@ MESSAGE(${OpenCV_VERSION})
 FILE(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/bin/examples")
 FILE(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/bin/test")
 
+
+
+
 #ADD_SUBDIRECTORY()
 INCLUDE_DIRECTORIES(include)
 INCLUDE_DIRECTORIES(src)
 INCLUDE_DIRECTORIES(test)
 INCLUDE_DIRECTORIES(${Boost_INCLUDE_DIRS})
 INCLUDE_DIRECTORIES(${EIGEN_INCLUDE_DIRS})
+message("eigendirs: ${EIGEN_INCLUDE_DIRS}")
 INCLUDE_DIRECTORIES(${PERFTOOLS_INCLUDE_DIRS})
 
+
 INCLUDE_DIRECTORIES(${G2O_INCLUDE_DIRS})
+
+
 INCLUDE_DIRECTORIES(${CSPARSE_INCLUDE_DIR})
 INCLUDE_DIRECTORIES(${OPENCV_INCLUDE_DIRS})
+include_directories(${YAML_CPP_INCLUDE_DIR})
 
 INCLUDE_DIRECTORIES(${catkin_INCLUDE_DIRS})
+# message("===========")
+# get_property(dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
+# foreach(dir ${dirs})
+#   message(STATUS "dir='${dir}'")
+# endforeach()
+# message("===========")
 include_directories(${PCL_INCLUDE_DIRS})
+
+
+
+# message("===========")
+# get_property(dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
+# foreach(dir ${dirs})
+#   message(STATUS "dir='${dir}'")
+# endforeach()
+# message("===========")
 
 ADD_LIBRARY(rfsslam 
   src/GaussianGenerators.cpp
@@ -231,7 +266,7 @@ ADD_LIBRARY(rfsslam
   )
   
   
-TARGET_LINK_LIBRARIES(rfsslam   yaml-cpp ${Boost_LIBRARIES}  ${OpenCV_LIBS} ${Sophus_LIBRARIES} fmt::fmt  ${catkin_LIBRARIES} 
+TARGET_LINK_LIBRARIES(rfsslam   ${YAML_CPP_LIBRARIES}  ${Boost_LIBRARIES}  ${OpenCV_LIBS} ${Sophus_LIBRARIES} fmt::fmt  ${catkin_LIBRARIES} 
 ${PCL_LIBRARIES}    )
 
 
@@ -242,18 +277,15 @@ link_directories(${PCL_LIBRARY_DIRS})
 
 
 ADD_EXECUTABLE(vglmbslam6d src/vglmbslam6d_euroc.cpp  src/external/ORBextractor.cc src/external/Converter.cc)
-# TARGET_LINK_LIBRARIES(vglmbslam6d  yaml-cpp  ${Boost_LIBRARIES} rfsslam ${CERES_LIBRARIES} ${CSPARSE_LIBRARY} g2o_core_d g2o_csparse_extension_d g2o_solver_csparse_d g2o_types_slam3d_d g2o_types_sba_d g2o_types_sim3_d  g2o_stuff_d  ${Perftools_PROFILER_LIBRARY} ${Perftools_TCMALLOC_LIBRARY} 
-# ${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES} gtsam )
+# TARGET_LINK_LIBRARIES(vglmbslam6d  ${YAML_CPP_LIBRARIES} glog::glog ${Boost_LIBRARIES} rfsslam  ${CSPARSE_LIBRARY} g2o_core_d g2o_csparse_extension_d g2o_solver_csparse_d g2o_types_slam3d_d g2o_types_sba_d g2o_types_sim3_d  g2o_stuff_d   
+# ${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES}  )
 
 
 
 # TARGET_LINK_LIBRARIES(vglmbslam6d  yaml-cpp  ${Boost_LIBRARIES} rfsslam ${CERES_LIBRARIES} ${CSPARSE_LIBRARY} g2o_core g2o_csparse_extension g2o_solver_csparse g2o_types_slam3d g2o_types_sba g2o_types_sim3  g2o_stuff  
-# ${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES} gtsam ${Perftools_PROFILER_LIBRARY} ${Perftools_TCMALLOC_LIBRARY}  )
+# ${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES}   )
 
-TARGET_LINK_LIBRARIES(vglmbslam6d  yaml-cpp  ${Boost_LIBRARIES} rfsslam ${CERES_LIBRARIES} ${CSPARSE_LIBRARY} g2o_core_rd g2o_csparse_extension_rd g2o_solver_csparse_rd g2o_types_slam3d_rd g2o_types_sba_rd g2o_types_sim3_rd  g2o_stuff_rd  
-${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES} gtsam ${Perftools_PROFILER_LIBRARY} ${Perftools_TCMALLOC_LIBRARY}  )
+TARGET_LINK_LIBRARIES(vglmbslam6d  ${YAML_CPP_LIBRARIES} glog::glog  ${Boost_LIBRARIES} rfsslam  ${CSPARSE_LIBRARY} g2o_core_rd g2o_csparse_extension_rd g2o_solver_csparse_rd g2o_types_slam3d_rd g2o_types_sba_rd g2o_types_sim3_rd  g2o_stuff_rd  
+${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES}   )
 
-# ADD_EXECUTABLE(hglmbslam6d src/vglmbslam6d_euroc_gtsam.cpp  src/external/ORBextractor.cc src/external/Converter.cc)
-# TARGET_LINK_LIBRARIES(hglmbslam6d  yaml-cpp  ${Boost_LIBRARIES} rfsslam  ${Perftools_PROFILER_LIBRARY} ${Perftools_TCMALLOC_LIBRARY} 
-# ${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES} gtsam)
 

@@ -4,7 +4,7 @@ MeasurementLikelihoodThreshold:  100.0
 lmExistenceProb: 0.01
 
 minframe: 60
-maxframe: 3000
+maxframe: 90000
 staticframes: 70
 
 PE: 1e-10
@@ -18,7 +18,7 @@ maxRange: 5
 numLevenbergIterations: 15
 tempFactor: 0.995
 initTemp: 1
-birthDeathNumIter: 2000
+birthDeathNumIter: 2
 crossoverNumIter: 13300 
 numPosesToOptimize: 60
 

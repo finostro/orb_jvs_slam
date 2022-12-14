@@ -43,15 +43,7 @@
 #include "g2o/core/robust_kernel_impl.h"
 #include "g2o/types/sba/types_six_dof_expmap.h" // se3 poses
 
-#include <gtsam/geometry/Pose3.h>
-#include <gtsam/geometry/Cal3_S2Stereo.h>
-#include <gtsam/nonlinear/Values.h>
-#include <gtsam/nonlinear/NonlinearEquality.h>
-#include <gtsam/nonlinear/NonlinearFactorGraph.h>
-#include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
-#include <gtsam/inference/Symbol.h>
-#include <gtsam/slam/StereoFactor.h>
-#include <gtsam/slam/dataset.h>
+
 
 #include "OrbslamMapPoint.hpp"
 #include "OrbslamPose.hpp"
@@ -91,8 +83,7 @@ struct VectorGLMBComponent6D {
 	typedef g2o::LinearSolverCSparse<SlamBlockSolver::PoseMatrixType> SlamLinearSolver;
 	g2o::SparseOptimizer *optimizer_;
 
-	gtsam::NonlinearFactorGraph graph;
-	gtsam::Values gtsam_state;
+
 
 	g2o::OptimizationAlgorithmLevenberg *solverLevenberg_;
 	SlamLinearSolver *linearSolver_;
