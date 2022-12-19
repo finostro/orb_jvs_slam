@@ -93,6 +93,8 @@ ENDIF()
 
 
 
+ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}   -D_GLIBCXX_ASSERTIONS")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}   -DLLVM_ENABLE_EXPENSIVE_CHECKS=ON")
 # sanitizer
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   -fsanitize=address  -fno-omit-frame-pointer")
@@ -151,19 +153,20 @@ ENDIF()
 
 
 
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp ")
 # OpenMP
-IF(APPLE AND ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang"))
-  SET(USE_OPENMP OFF) # OpenMP does not yet work with Clang, but hopefully soon
-ELSE()
-  SET(USE_OPENMP OFF CACHE BOOL "Use OpenMP to compile multithreaded versions of SLAM algorithms.")
-ENDIF()
-IF(USE_OPENMP)
-  IF("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
-    SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp=libomp ")
-  ELSE()
-    SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp ")
-  ENDIF()
-ENDIF()
+# IF(APPLE AND ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang"))
+#   SET(USE_OPENMP OFF) # OpenMP does not yet work with Clang, but hopefully soon
+# ELSE()
+#   SET(USE_OPENMP OFF CACHE BOOL "Use OpenMP to compile multithreaded versions of SLAM algorithms.")
+# ENDIF()
+# IF(USE_OPENMP)
+#   IF("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
+#     SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp=libomp ")
+#   ELSE()
+#     SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp ")
+#   ENDIF()
+# ENDIF()
 
 
 #Threads
@@ -241,22 +244,22 @@ INCLUDE_DIRECTORIES(${OPENCV_INCLUDE_DIRS})
 include_directories(${YAML_CPP_INCLUDE_DIR})
 
 INCLUDE_DIRECTORIES(${catkin_INCLUDE_DIRS})
-# message("===========")
-# get_property(dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
-# foreach(dir ${dirs})
-#   message(STATUS "dir='${dir}'")
-# endforeach()
-# message("===========")
+message("===========")
+get_property(dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
+foreach(dir ${dirs})
+  message(STATUS "dir='${dir}'")
+endforeach()
+message("===========")
 include_directories(${PCL_INCLUDE_DIRS})
 
 
 
-# message("===========")
-# get_property(dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
-# foreach(dir ${dirs})
-#   message(STATUS "dir='${dir}'")
-# endforeach()
-# message("===========")
+message("===========")
+get_property(dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
+foreach(dir ${dirs})
+  message(STATUS "dir='${dir}'")
+endforeach()
+message("===========")
 
 ADD_LIBRARY(rfsslam 
   src/GaussianGenerators.cpp

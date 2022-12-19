@@ -2096,8 +2096,8 @@ void print_map(const MapType & m)
 					if(ng%2==0){
 						expectedChange += sampleDA(c);
 					}else{
-						//reverseSampleDA(c);
-						expectedChange += sampleDA(c);
+						reverseSampleDA(c);
+						//expectedChange += sampleDA(c);
 					}
 
 
@@ -2652,7 +2652,8 @@ void print_map(const MapType & m)
 
 		for (int i = 0; i < c.landmarks_.size(); i++)
 		{
-			if (c.landmarks_[i].numDetections_ > 0 || c.landmarks_[i].numFoV_ == 0)
+			auto &lm=c.landmarks_[i];
+			if (lm.numDetections_ > 0 || lm.numFoV_ == 0 || lm.birthTime_>c.poses_[maxpose_-1].stamp)
 			{
 				continue;
 			}
@@ -2829,17 +2830,18 @@ void print_map(const MapType & m)
 				continue;
 			}
 
-			c.landmarksResetProb_[i] = -(c.landmarks_[i].numDetections_) * std::log(config.PD_) - (c.landmarks_[i].numFoV_ - c.landmarks_[i].numDetections_) * std::log(1 - config.PD_) - config.logExistenceOdds;
+			c.landmarksResetProb_[i] =(c.landmarks_[i].numDetections_)*config.logKappa_ -(c.landmarks_[i].numDetections_) * std::log(config.PD_) - (c.landmarks_[i].numFoV_ - c.landmarks_[i].numDetections_) * std::log(1 - config.PD_) - config.logExistenceOdds;
 			//c.landmarksResetProb_[i] =( (double)( c.landmarks_[i].numDetections_))/c.landmarks_[i].numFoV_;
 			double det_r =( (double)( c.landmarks_[i].numDetections_))/c.landmarks_[i].numFoV_;
-			double p;
-			if (det_r > config.PD_){
-				p = 0.01;
-			}else{
-				p = 0.01+(config.PD_-det_r)/10.0;
-			}
-			//double p = exp (-(1-c.landmarksResetProb_[i])/(config.PD_) );
-			if (uni_dist(randomGenerators_[threadnum]) < c.landmarksResetProb_[i] )
+			// double p;
+			// if (det_r > config.PD_){
+			// 	p = 0.01;
+			// }else{
+			// 	p = 0.01+(config.PD_-det_r)/10.0;
+			// }
+			double aux= exp(c.landmarksResetProb_[i] );
+			double p = aux/(1+aux);
+			if (uni_dist(randomGenerators_[threadnum]) < p )
 			{
 				/*
 				 c.landmarksResetProb_[i] = (1-((double)c.landmarks_[i]numDetections_)/c.landmarks_[i].numFoV_)*(config.PD_);
@@ -2869,13 +2871,13 @@ void print_map(const MapType & m)
 				}
 				expectedWeightChange +=-config.logExistenceOdds;
 				expectedWeightChange += -std::log(1 - config.PD_) * c.landmarks_[i].numFoV_;
-				/*
+				
 				 std::cout << termcolor::red << "KILL LANDMARK\n" << termcolor::reset
 				 << c.landmarksResetProb_[i] << " n "
 				 << c.landmarks_[i].numDetections_ << " nfov:"
 				 << c.landmarks_[i].numFoV_ << "  expectedChange "
 				 << expectedWeightChange << "\n";
-				 */
+				 
 
 				c.landmarks_[i].numDetections_ = 0;
 			}
@@ -3245,7 +3247,7 @@ void print_map(const MapType & m)
 								if (birth_it2 == c.DA_bimap_[kbirth].right.end()){
 									if(lm.numDetections_== lm.numFoV_){
 										std::cout << termcolor::red << "adding imposssible det_:\n" << termcolor::reset;
-										//printDA(c);
+										printDA(c);
 										assert(0);
 									}
 									auto result = c.DA_bimap_[kbirth].insert({c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch, probs.i[sample] });
@@ -3298,7 +3300,10 @@ void print_map(const MapType & m)
 							if (desc_right.desc[i])
 								avg_desc[i]++;
 						}
-						map_point.normalVector += c.poses_[posenum].point_camera_frame[nz].normalized();
+						Eigen::Vector3d lmpos=map_point.pPoint->estimate();
+						Eigen::Vector3d poset = c.poses_[posenum].pPose->estimate().translation();
+
+						map_point.normalVector += (lmpos-poset).normalized();
 
 					}
 					for(int i=0;i<256;i++){
@@ -3337,7 +3342,7 @@ void print_map(const MapType & m)
 				for (int lm = 0; lm < c.landmarks_.size(); lm++)
 				{
 
-					if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[k].stamp))
+					//if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[k].stamp))
 					//if ( (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp))
 					{
 						if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
@@ -3615,19 +3620,19 @@ void print_map(const MapType & m)
 							Eigen::Matrix<double, PointType::Dimension, 1> b, sol;
 							b = Jpoint.transpose() * omega_r;
 
-							Eigen::LLT<
-								Eigen::Matrix<double, PointType::Dimension,
-											  PointType::Dimension>>
-								lltofH(H);
-							sol = lltofH.solve(b);
+							// Eigen::LLT<
+							// 	Eigen::Matrix<double, PointType::Dimension,
+							// 				  PointType::Dimension>>
+							// 	lltofH(H);
+							// sol = lltofH.solve(b);
 
-							p += -std::log(
-								lltofH.matrixL().determinant());
-							assert(!isnan(p));
-							p +=
-								std::log(
-									c.poses_[k].Z_[nz]->information().determinant());
-							assert(!isnan(p));
+							// p += -std::log(
+							// 	lltofH.matrixL().determinant());
+							// assert(!isnan(p));
+							// p +=
+							// 	std::log(
+							// 		c.poses_[k].Z_[nz]->information().determinant());
+							// assert(!isnan(p));
 
 							// p += -0.5 * (.poses_[k].Z_[nz]->chi2() - sol.dot(b));
 							p += -0.5 * (c.poses_[k].Z_[nz]->chi2());
@@ -3751,7 +3756,6 @@ void print_map(const MapType & m)
 		pose.initial_lm_id[numMatch] = newId;
 		//pose.Z_[numMatch]->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(lm.pPoint));
 
-		lm.normalVector = pose.point_camera_frame[numMatch].normalized();
 		// with only 2 descriptors (left,right) we can pick either one to represent the point
 		// allocating new
 		lm.descriptor = pose.descriptors_left[nl];
@@ -3760,6 +3764,9 @@ void print_map(const MapType & m)
 		point_world_frame = pose.pPose->estimate().inverse().map(pose.point_camera_frame[numMatch]);
 		lm.pPoint->setEstimate(point_world_frame);
 		lm.birthTime_ = pose.stamp;
+
+
+		lm.normalVector = (point_world_frame - pose.pPose->estimate().translation()).normalized();
 		//pose.Z_[numMatch]->computeError();
 
 		return true;
