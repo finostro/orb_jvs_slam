@@ -4,14 +4,14 @@ MeasurementLikelihoodThreshold:  100.0
 lmExistenceProb: 0.01
 
 minframe: 60
-maxframe: 90000
+maxframe: 300
 staticframes: 70
 
 PE: 1e-10
-logExistenceOdds: -100
+logExistenceOdds: -300
 PD: 0.8
-numIterations: 2000
-numGibbs: 50
+numIterations: 100
+numGibbs: 20
 numLandmarks: 100
 numComponents: 14
 maxRange: 5
@@ -48,16 +48,16 @@ odomInfo:
 stereoInfo:
     rows: 3
     cols: 3
-    data: [1.5 , 0.0 , 0.0 ,
-    0.0 , 1.50 , 0.0 ,
-    0.0 , 0.0 , 1.50 ]
-logKappa: -120.0
+    data: [1. , 0.0 , 0.0 ,
+    0.0 , 1.0 , 0.0 ,
+    0.0 , 0.0 , 1.0 ]
+logKappa: -80.0
 
 
 viewingCosLimit: 0.5
 use_gui: true
-eurocFolder: /media/finostro/ssd_linux/euroc_dataset/V2_01_easy
-eurocTimestampsFilename: /media/finostro/ssd_linux/euroc_dataset/EuRoC_TimeStamps/V201.txt
+eurocFolder: /home/finostro/euroc_dataset/V2_01_easy
+eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V201.txt
 stereo_init_max_depth: 60.0
 
 base_link_to_cam0:
