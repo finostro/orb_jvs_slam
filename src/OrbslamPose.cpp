@@ -35,7 +35,7 @@ namespace rfs
 {
 
 
-        bool OrbslamPose::isInFrustum(OrbslamMapPoint *pMP, float viewingCosLimit, g2o::CameraParameters *cam_params)
+        bool OrbslamPose::isInFrustum(OrbslamMapPoint *pMP, float viewingCosLimit, g2o::CameraParameters *cam_params, double * predictedScale)
         {
 
         	Eigen::Vector3d  point_in_camera_frame = pPose->estimate().map(pMP->pPoint->estimate());
@@ -81,6 +81,9 @@ namespace rfs
 
             // Predict scale in the image
             const int nPredictedLevel = pMP->predictScale(dist, this);
+            if (predictedScale!=NULL){
+                *predictedScale = nPredictedLevel;
+            }
             return true;
         }
 

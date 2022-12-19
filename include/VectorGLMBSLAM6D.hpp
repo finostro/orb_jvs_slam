@@ -2095,6 +2095,7 @@ void print_map(const MapType & m)
 				{
 					if(ng%2==0){
 						expectedChange += sampleDA(c);
+						//reverseSampleDA(c);
 					}else{
 						reverseSampleDA(c);
 						//expectedChange += sampleDA(c);
@@ -2415,7 +2416,7 @@ void print_map(const MapType & m)
 			int prevedges =  c.poses_[k].pPose->edges().size();
 			int numselections=0;
 			int addededges = 0;
-			for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
+			for (int nz = 0; nz < c.poses_[k].Z_.size(); nz++)
 			{
 				int selectedDA = -5;
 				auto it = c.DA_bimap_[k].left.find(nz);
@@ -2653,13 +2654,18 @@ void print_map(const MapType & m)
 		for (int i = 0; i < c.landmarks_.size(); i++)
 		{
 			auto &lm=c.landmarks_[i];
-			if (lm.numDetections_ > 0 || lm.numFoV_ == 0 || lm.birthTime_>c.poses_[maxpose_-1].stamp)
+			if (lm.numDetections_ > 0 || lm.numFoV_ == 0 || lm.birthTime_>c.poses_[maxpose_-1].stamp || lm.birthTime_<c.poses_[minpose_].stamp)
 			{
 				continue;
 			}
 			//
-			c.landmarksInitProb_[i] = c.landmarksInitProb_[i] / (c.landmarks_[i].numFoV_ * config.PD_);
-			if (c.landmarksInitProb_[i] > uni_dist(randomGenerators_[threadnum]))
+			//c.landmarksInitProb_[i] = c.landmarksInitProb_[i] / (c.landmarks_[i].numFoV_ * config.PD_);
+			double numdet = c.landmarksInitProb_[i];
+			c.landmarksInitProb_[i] =-(numdet)*config.logKappa_ +(numdet) * std::log(config.PD_) + (c.landmarks_[i].numFoV_ - numdet) * std::log(1 - config.PD_) + config.logExistenceOdds;
+			
+			double aux= exp(c.landmarksInitProb_[i] );
+			double p = aux/(1+aux);
+			if (p > uni_dist(randomGenerators_[threadnum]))
 			{
 				// reset all associations to false alarms
 				expectedWeightChange += (config.logKappa_ + (1 - config.PD_)) * c.landmarks_[i].numFoV_;
@@ -2772,15 +2778,15 @@ void print_map(const MapType & m)
 					continue;
 				}
 
-				for (int l = 0; l < c.DAProbs_[k][it->second].i.size(); l++)
-				{
-					if (c.DAProbs_[k][it->second].i[l] == it->first)
-					{
+				// for (int l = 0; l < c.DAProbs_[k][it->second].i.size(); l++)
+				// {
+				// 	if (c.DAProbs_[k][it->second].i[l] == it->first)
+				// 	{
 
-						expectedWeightChange -= c.DAProbs_[k][it->second].l[l];
-						break;
-					}
-				}
+				// 		expectedWeightChange -= c.DAProbs_[k][it->second].l[l];
+				// 		break;
+				// 	}
+				// }
 				c.landmarks_[todelete - c.landmarks_[0].pPoint->id()].numDetections_--;
 				assert(c.landmarks_[todelete - c.landmarks_[0].pPoint->id()].numDetections_ >= 0);
 				c.landmarks_[toAddMeasurements - c.landmarks_[0].pPoint->id()].numDetections_++;
@@ -2855,17 +2861,17 @@ void print_map(const MapType & m)
 						c.landmarks_[i].pPoint->id());
 					if (it != c.DA_bimap_[k].right.end())
 					{
-						for (int l = 0; l < c.DAProbs_[k][it->second].i.size();
-							 l++)
-						{
-							if (c.DAProbs_[k][it->second].i[l] == it->first)
-							{
-								numdet++;
-								expectedWeightChange -=
-									c.DAProbs_[k][it->second].l[l];
-								break;
-							}
-						}
+						// for (int l = 0; l < c.DAProbs_[k][it->second].i.size();
+						// 	 l++)
+						// {
+						// 	if (c.DAProbs_[k][it->second].i[l] == it->first)
+						// 	{
+						// 		numdet++;
+						// 		expectedWeightChange -=
+						// 			c.DAProbs_[k][it->second].l[l];
+						// 		break;
+						// 	}
+						// }
 						c.DA_bimap_[k].right.erase(it);
 					}
 				}
@@ -2938,6 +2944,13 @@ void print_map(const MapType & m)
 					if (it != c.DA_bimap_[k].right.end())
 					{
 						prevDA = it->second;
+					}
+
+					if(lm.numDetections_>0){
+						if(&c.poses_[k] == lm.birthPose){
+							assert(prevDA == lm.birthMatch);
+							continue;
+						}
 					}
 
 
@@ -3087,6 +3100,12 @@ void print_map(const MapType & m)
 				if (it != c.DA_bimap_[k].left.end())
 				{
 					selectedDA = it->second;
+					auto &selectedLM = c.landmarks_[selectedDA-c.landmarks_[0].id];
+					if (selectedLM.numDetections_>1 && nz == selectedLM.birthMatch && selectedLM.birthPose == &(c.poses_[k]) ){
+						// selected this measurement spawns landmark , cannot sample
+						continue;
+
+					}
 				}
 				double maxlikelihood = -std::numeric_limits<double>::infinity();
 				int maxlikelihoodi = 0;
@@ -3282,7 +3301,7 @@ void print_map(const MapType & m)
 					
 					std::vector<int> avg_desc(256,0);
 					map_point.normalVector.setZero();
-
+					double depth=0;
 
 
 					for (auto &edge: map_point.pPoint->edges()){
@@ -3292,20 +3311,30 @@ void print_map(const MapType & m)
 						auto it = c.DA_bimap_[posenum].right.find(map_point.id);
 						assert ( it != c.DA_bimap_[posenum].right.end() );
 						int nz = it->second;
-						auto &desc_left = c.poses_[posenum].descriptors_left[c.poses_[posenum].matches_left_to_right[nz].queryIdx];
-						auto &desc_right = c.poses_[posenum].descriptors_right[c.poses_[posenum].matches_left_to_right[nz].trainIdx];
+						int nl = c.poses_[posenum].matches_left_to_right[nz].queryIdx;
+						int nr = c.poses_[posenum].matches_left_to_right[nz].trainIdx;
+						auto &desc_left = c.poses_[posenum].descriptors_left[nl];
+						auto &desc_right = c.poses_[posenum].descriptors_right[nr];
 						for(int i=0;i<256;i++){
 							if (desc_left.desc[i])
 								avg_desc[i]++;
 							if (desc_right.desc[i])
 								avg_desc[i]++;
 						}
-						Eigen::Vector3d lmpos=map_point.pPoint->estimate();
+						Eigen::Vector3d lmpos = map_point.pPoint->estimate();
 						Eigen::Vector3d poset = c.poses_[posenum].pPose->estimate().translation();
+						int level = c.poses_[posenum].keypoints_left[nl].octave;
 
+						depth +=(lmpos-poset).norm()*c.poses_[posenum].mvScaleFactors[level];
 						map_point.normalVector += (lmpos-poset).normalized();
 
 					}
+					assert(map_point.numDetections_ == map_point.pPoint->edges().size());
+					depth = depth/map_point.numDetections_;
+					map_point.mfMaxDistance = 1.2*depth;
+					//assert(map_point.mfMaxDistance<10.0);
+					map_point.mfMinDistance = map_point.mfMaxDistance / c.poses_[0].mvScaleFactors[ c.poses_[0].mnScaleLevels - 1] * 0.8;
+
 					for(int i=0;i<256;i++){
 						map_point.descriptor.desc[i] = avg_desc[i]>map_point.numDetections_;
 					}
@@ -3329,12 +3358,14 @@ void print_map(const MapType & m)
 			map_point.numFoV_ = 0;
 			map_point.numFoV_ = 0;
 			map_point.is_in_fov_.resize(0);
+			map_point.predicted_scales.resize(0);
 		}
 
 		for (int k = 0; k < maxpose_; k++)
 		{
 
 			c.poses_[k].fov_.clear();
+			c.poses_[k].predicted_scales.clear();
 
 			if (c.poses_[k].Z_.size() > 0)
 			{ // if no measurements we set FoV to empty ,
@@ -3345,12 +3376,15 @@ void print_map(const MapType & m)
 					//if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[k].stamp))
 					//if ( (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp))
 					{
+						double predScale=0;
 						if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
-													config.viewingCosLimit_, config.g2o_cam_params))
+													config.viewingCosLimit_, config.g2o_cam_params, &predScale))
 						{
 
 							c.poses_[k].fov_.push_back(c.landmarks_[lm].pPoint->id());
+							c.poses_[k].predicted_scales.push_back(predScale);
 							c.landmarks_[lm].is_in_fov_.push_back(k);
+							c.landmarks_[lm].predicted_scales.push_back(predScale);
 							c.landmarks_[lm].numFoV_++;
 						}
 					}
@@ -3451,6 +3485,12 @@ void print_map(const MapType & m)
 					StereoMeasurementEdge  &z = *c.poses_[k].Z_[nz];
 
 						auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
+						int predictedScale = c.poses_[k].predicted_scales[lmFovIdx];
+						int scalediff = abs(predictedScale-c.poses_[k].keypoints_left[c.poses_[k].matches_left_to_right[nz].queryIdx].octave );
+						if(scalediff >2){
+							continue;
+						}
+						p += -30.0*scalediff;
 						//int dist = ORBDescriptor::distance(lm.descriptor, c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
 						double desclikelihood = lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
 						if (desclikelihood < -100*1.0){
@@ -3545,9 +3585,9 @@ void print_map(const MapType & m)
 								lltofH(
 									H);
 							sol = lltofH.solve(b);
-							double poseh_det=poseHessianCopy.determinant();
-							double pointh_det=pointHessian.determinant();
-							double updated_det=lltofH.matrixL().determinant();
+							double poseh_det = poseHessianCopy.determinant();
+							double pointh_det = pointHessian.determinant();
+							double updated_det = lltofH.matrixL().determinant();
 							assert(poseh_det>0);
 							assert(pointh_det>0);
 							assert(updated_det>0);
