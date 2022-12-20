@@ -3,26 +3,26 @@ MeasurementLikelihoodThreshold:  100.0
 
 lmExistenceProb: 0.01
 
-minframe: 60
-maxframe: 4000
+minframe: 50
+maxframe: 6000
 staticframes: 70
 
 PE: 1e-10
-logExistenceOdds: -100
+logExistenceOdds: -200
 PD: 0.8
-numIterations: 3000
-numGibbs: 60
+numIterations: 4000
+numGibbs: 40
 numLandmarks: 100
 numComponents: 14
 maxRange: 5
-numLevenbergIterations: 15
+numLevenbergIterations: 25
 tempFactor: 0.995
 initTemp: 1
 birthDeathNumIter: 1
-crossoverNumIter: 13300 
+crossoverNumIter: 13300
 numPosesToOptimize: 50
 
-perturbTrans: 0.002
+perturbTrans: 0.001
 perturbRot: 0.005
 
 
@@ -51,7 +51,7 @@ stereoInfo:
     data: [1.5 , 0.0 , 0.0 ,
     0.0 , 1.50 , 0.0 ,
     0.0 , 0.0 , 1.50 ]
-logKappa: -120.0
+logKappa: -90.0
 
 
 viewingCosLimit: 0.5
@@ -110,7 +110,7 @@ camera_params:
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-ORBextractor.nFeatures: 150
+ORBextractor.nFeatures: 200
 
 # ORB Extractor: Scale factor between levels in the scale pyramid 	
 ORBextractor.scaleFactor: 1.2
@@ -123,7 +123,7 @@ ORBextractor.nLevels: 8
 # Firstly we impose iniThFAST. If no corners are detected we impose a lower value minThFAST
 # You can lower these values if your images have low contrast			
 ORBextractor.iniThFAST: 20
-ORBextractor.minThFAST: 7
+ORBextractor.minThFAST: 7 #7
 
 
 

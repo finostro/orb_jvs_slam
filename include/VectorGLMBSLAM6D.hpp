@@ -3487,10 +3487,10 @@ void print_map(const MapType & m)
 						auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
 						int predictedScale = c.poses_[k].predicted_scales[lmFovIdx];
 						int scalediff = abs(predictedScale-c.poses_[k].keypoints_left[c.poses_[k].matches_left_to_right[nz].queryIdx].octave );
-						if(scalediff >2){
+						if(scalediff >3){
 							continue;
 						}
-						p += -30.0*scalediff;
+						p += 20-20.0*scalediff;
 						//int dist = ORBDescriptor::distance(lm.descriptor, c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
 						double desclikelihood = lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
 						if (desclikelihood < -100*1.0){
@@ -3674,8 +3674,9 @@ void print_map(const MapType & m)
 							// 		c.poses_[k].Z_[nz]->information().determinant());
 							// assert(!isnan(p));
 
-							// p += -0.5 * (.poses_[k].Z_[nz]->chi2() - sol.dot(b));
-							p += -0.5 * (c.poses_[k].Z_[nz]->chi2());
+							// p += -0.5 * (c.poses_[k].Z_[nz]->chi2() - sol.dot(b));
+							
+							 p += -0.5 * (c.poses_[k].Z_[nz]->chi2());
 							assert(!isnan(p));
 							p += -0.5 * c.poses_[k].Z_[nz]->dimension() * std::log(2 * M_PI);
 							assert(!isnan(p));
@@ -3752,9 +3753,9 @@ void print_map(const MapType & m)
 		stereo_edge->setMeasurement(uvu);
 
 
-		// g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
-		// stereo_edge->setRobustKernel(rk);
-		// rk->setDelta(sqrt(7.8));
+		g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
+		stereo_edge->setRobustKernel(rk);
+		rk->setDelta(sqrt(7.8));
 
 		pose.Z_[numMatch] = stereo_edge;
 
