@@ -8,14 +8,14 @@ maxframe: 6000
 staticframes: 70
 
 PE: 1e-10
-logExistenceOdds: -200
+logExistenceOdds: -600
 PD: 0.8
 numIterations: 4000
-numGibbs: 40
+numGibbs: 60
 numLandmarks: 100
-numComponents: 14
+numComponents: 16
 maxRange: 5
-numLevenbergIterations: 25
+numLevenbergIterations: 5
 tempFactor: 0.995
 initTemp: 1
 birthDeathNumIter: 1
@@ -23,7 +23,7 @@ crossoverNumIter: 13300
 numPosesToOptimize: 50
 
 perturbTrans: 0.001
-perturbRot: 0.005
+perturbRot: 0.004
 
 
 finalStateFile: optimizedState.g2o
@@ -48,10 +48,10 @@ odomInfo:
 stereoInfo:
     rows: 3
     cols: 3
-    data: [1.5 , 0.0 , 0.0 ,
-    0.0 , 1.50 , 0.0 ,
-    0.0 , 0.0 , 1.50 ]
-logKappa: -90.0
+    data: [2.0 , 0.0 , 0.0 ,
+    0.0 , 2.00 , 0.0 ,
+    0.0 , 0.0 , 2.00 ]
+logKappa: -100.0
 
 
 viewingCosLimit: 0.5
@@ -110,7 +110,7 @@ camera_params:
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-ORBextractor.nFeatures: 200
+ORBextractor.nFeatures: 400
 
 # ORB Extractor: Scale factor between levels in the scale pyramid 	
 ORBextractor.scaleFactor: 1.2

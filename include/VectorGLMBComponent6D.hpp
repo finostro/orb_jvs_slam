@@ -67,7 +67,6 @@ struct AssociationProbabilities {
 
 
 
-
 /**
  * Struct to store a single component of a VGLMB , with its own g2o optimizer
  */

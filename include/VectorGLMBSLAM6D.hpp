@@ -126,6 +126,19 @@ namespace rfs
 		g2o::SE3Quat pose;
 	};
 
+	// for profiler
+int opt1(g2o::SparseOptimizer *optimizer, int ni){
+	return optimizer->optimize(ni);
+}
+int opt2(g2o::SparseOptimizer *optimizer, int ni){
+	return optimizer->optimize(ni);
+}
+
+int opt3(g2o::SparseOptimizer *optimizer, int ni){
+	return optimizer->optimize(ni);
+}
+
+
 	struct TrajectoryWeight{
 		double weight;
 		std::vector<StampedPose> trajectory;
@@ -178,6 +191,8 @@ void print_map(const MapType & m)
         std::cout << iter->first << "-->" << iter->second << std::endl;
     }
 }
+
+
 
 	// Computes the Hamming distance between two ORB descriptors
 	static int descriptorDistance(const cv::Mat &a, const cv::Mat &b)
@@ -1568,7 +1583,7 @@ void print_map(const MapType & m)
 
 			if (best_DA_max_detection_time_ + config.numPosesToOptimize_/2 < maxpose_)
 			{
-				maxpose_ = best_DA_max_detection_time_ + config.numPosesToOptimize_/2;
+				maxpose_ = best_DA_max_detection_time_ +10;// config.numPosesToOptimize_/2;
 			}
 			if (maxpose_ > components_[0].poses_.size())
 				maxpose_ = components_[0].poses_.size();
@@ -1972,13 +1987,14 @@ void print_map(const MapType & m)
 
 			
 			auto &c = components_[i];
-			// for (int k=0; k< minpose_;k+=2){
-			// 	if(k%5!=0){
-			// 		for(int nz=0; nz < c.poses_[k].Z_.size();nz++){
-			// 			c.poses_[k].Z_[nz]->setLevel(2);
-			// 		}
-			// 	}
-			// }
+			for (int k=0; k< minpose_;k+=2){
+				if(k%5!=0){
+					 for(int nz=0; nz < c.poses_[k].Z_.size();nz++){
+					 	c.poses_[k].Z_[nz]->setLevel(2);
+					 }
+					//c.poses_[k].pPose->setMarginalized(true);
+				}
+			}
 			for(int k = 1; k< maxpose_ ; k++){
 				c.odometries_[k-1]->setLevel(0);
 			}
@@ -1997,13 +2013,17 @@ void print_map(const MapType & m)
 			for(int k = 0; k< config.staticframes-config.minframe ; k++){
 				c.poses_[k].pPose->setFixed(true);
 			}
+			for(int k = std::max(config.staticframes-config.minframe,0); k< minpose_ ; k++){
+				c.poses_[k].pPose->setFixed(true);
+			}
 			c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
 			//c.optimizer_->computeInitialGuess();
 			c.optimizer_->setVerbose(false);
 			//std::cout  << "optimizing \n";
 			//c.optimizer_->save("initial.g2o");
-			int niterations = c.optimizer_->optimize(1);
+
+			//int niterations = opt1(c.optimizer_ , 1);
 			//assert(niterations > 0);
 			perturbTraj(c);
 			//std::cout  << "optimized \n";
@@ -2080,7 +2100,7 @@ void print_map(const MapType & m)
 					// }
 					// c.poses_[0].pPose->setFixed(true);
 					c.optimizer_->initializeOptimization();
-					int niterations = c.optimizer_->optimize(2);
+					int niterations = opt2(c.optimizer_ , 1);
 					updateMetaStates(c);
 
 					moveBirth(c);
@@ -2175,6 +2195,9 @@ void print_map(const MapType & m)
 			for(int k = 0; k< config.staticframes-config.minframe ; k++){
 				c.poses_[k].pPose->setFixed(true);
 			}
+			for(int k = std::max(config.staticframes-config.minframe,0); k< minpose_ ; k++){
+				c.poses_[k].pPose->setFixed(true);
+			}
 			c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
 			//c.optimizer_->computeInitialGuess();
@@ -2182,7 +2205,7 @@ void print_map(const MapType & m)
 			if (!c.optimizer_->verifyInformationMatrices(true)){
 				std::cerr << "info is bad\n";
 			}
-			niterations = c.optimizer_->optimize(ni);
+			int niterations = opt3(c.optimizer_ , ni);
 			//assert(niterations > 0);
 			// std::cout <<"niterations  " <<c.optimizer_->optimize(ni) << "\n";
 			calculateWeight(c);
@@ -3361,7 +3384,7 @@ void print_map(const MapType & m)
 			map_point.predicted_scales.resize(0);
 		}
 
-		for (int k = 0; k < maxpose_; k++)
+		for (int k = minpose_; k < maxpose_; k++)
 		{
 
 			c.poses_[k].fov_.clear();
@@ -3414,13 +3437,13 @@ void print_map(const MapType & m)
 			c.reverseDAProbs_[k].resize(c.poses_[k].fov_.size());
 			c.DAProbs_[k].resize(c.poses_[k].Z_.size());
 
-			double posHLogDet;
-			if (!c.poses_[k].pPose->fixed())
-			{
-				posHLogDet = std::log(c.poses_[k].pPose->hessianDeterminant());
-			}
-			PoseType::HessianBlockType poseHessian(
-				c.poses_[k].pPose->hessianData());
+			// double posHLogDet;
+			// if (!c.poses_[k].pPose->fixed())
+			// {
+			// 	posHLogDet = std::log(c.poses_[k].pPose->hessianDeterminant());
+			// }
+			// PoseType::HessianBlockType poseHessian(
+			// 	c.poses_[k].pPose->hessianData());
 
 			for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
 			{
@@ -3459,21 +3482,21 @@ void print_map(const MapType & m)
 					assert(c.poses_[k].Z_[nz]->vertex(0)->id() == selectedDA);
 					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
 				}
-				Eigen::Matrix<double, PoseType::HessianBlockType::RowsAtCompileTime,
-							  PoseType::HessianBlockType::ColsAtCompileTime>
-					poseHessianCopy;
+				// Eigen::Matrix<double, PoseType::HessianBlockType::RowsAtCompileTime,
+				// 			  PoseType::HessianBlockType::ColsAtCompileTime>
+				// 	poseHessianCopy;
 
-				if (!c.poses_[k].pPose->fixed())
-				{
-					poseHessianCopy = poseHessian;
-				}
-				if (selectedDA >= 0)
-				{
-					c.poses_[k].Z_[nz]->g2o::BaseBinaryEdge<3, g2o::Vector3, PointType, PoseType>::linearizeOplus(jac_ws);
-					StereoMeasurementEdge::JacobianXjOplusType Jpose =
-						c.poses_[k].Z_[nz]->jacobianOplusXj();
-					poseHessianCopy -= Jpose.transpose() * c.poses_[k].Z_[nz]->information() * Jpose;
-				}
+				// if (!c.poses_[k].pPose->fixed())
+				// {
+				// 	poseHessianCopy = poseHessian;
+				// }
+				// if (selectedDA >= 0)
+				// {
+				// 	c.poses_[k].Z_[nz]->g2o::BaseBinaryEdge<3, g2o::Vector3, PointType, PoseType>::linearizeOplus(jac_ws);
+				// 	StereoMeasurementEdge::JacobianXjOplusType Jpose =
+				// 		c.poses_[k].Z_[nz]->jacobianOplusXj();
+				// 	poseHessianCopy -= Jpose.transpose() * c.poses_[k].Z_[nz]->information() * Jpose;
+				// }
 				c.DAProbs_[k][nz].i.push_back(-5);
 				c.DAProbs_[k][nz].l.push_back(config.logKappa_);
 
@@ -3501,7 +3524,7 @@ void print_map(const MapType & m)
 						p += std::log(config.PD_) - std::log(1 - config.PD_);
 						c.poses_[k].Z_[nz]->setVertex(0, lm.pPoint);
 
-						c.poses_[k].Z_[nz]->g2o::BaseBinaryEdge<3, g2o::Vector3, PointType, PoseType>::linearizeOplus(jac_ws);
+						//c.poses_[k].Z_[nz]->g2o::BaseBinaryEdge<3, g2o::Vector3, PointType, PoseType>::linearizeOplus(jac_ws);
 						c.poses_[k].Z_[nz]->computeError();
 						
 
@@ -3515,150 +3538,150 @@ void print_map(const MapType & m)
 						}
 
 						// if pose is not fixed, calc updated pose and lm
-						if (false && !c.poses_[k].pPose->fixed())
-						{
-							PointType::HessianBlockType::PlainMatrix pointHessian;
-							//PointType::HessianBlockType pointHessian(h.data());
+						// if (false && !c.poses_[k].pPose->fixed())
+						// {
+						// 	PointType::HessianBlockType::PlainMatrix pointHessian;
+						// 	//PointType::HessianBlockType pointHessian(h.data());
 
-							if (c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].numDetections_ > 0)
-							{
-								// assert(c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData()!=NULL);
-								// new (&pointHessian) PointType::HessianBlockType(
-								// 	c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
-								for (int i= 0; i < pointHessian.rows(); i++){
-									for (int j; j< pointHessian.cols() ;j++){
-										pointHessian(i,j) = lm.pPoint->hessian(i,j);
-									}
-								}
-								//h = lm.pPoint->hessian();
+						// 	if (c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].numDetections_ > 0)
+						// 	{
+						// 		// assert(c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData()!=NULL);
+						// 		// new (&pointHessian) PointType::HessianBlockType(
+						// 		// 	c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
+						// 		for (int i= 0; i < pointHessian.rows(); i++){
+						// 			for (int j; j< pointHessian.cols() ;j++){
+						// 				pointHessian(i,j) = lm.pPoint->hessian(i,j);
+						// 			}
+						// 		}
+						// 		//h = lm.pPoint->hessian();
 
-								// std::cout << "g2o pointH: " << pointHessian << "\n\n\n";
-							}
-							else
-							{
-								pointHessian = config.anchorInfo_;
-								// std::cout << "calc pointH: " << pointHessian << "\n\n\n";
-							}
-							// std::cout << "numdetections:  " << c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].numDetections_  << "\n";
+						// 		// std::cout << "g2o pointH: " << pointHessian << "\n\n\n";
+						// 	}
+						// 	else
+						// 	{
+						// 		pointHessian = config.anchorInfo_;
+						// 		// std::cout << "calc pointH: " << pointHessian << "\n\n\n";
+						// 	}
+						// 	// std::cout << "numdetections:  " << c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].numDetections_  << "\n";
 
-							StereoMeasurementEdge::JacobianXjOplusType Jpose =
-								c.poses_[k].Z_[nz]->jacobianOplusXj();
-							StereoMeasurementEdge::JacobianXiOplusType Jpoint =
-								c.poses_[k].Z_[nz]->jacobianOplusXi();
+						// 	StereoMeasurementEdge::JacobianXjOplusType Jpose =
+						// 		c.poses_[k].Z_[nz]->jacobianOplusXj();
+						// 	StereoMeasurementEdge::JacobianXiOplusType Jpoint =
+						// 		c.poses_[k].Z_[nz]->jacobianOplusXi();
 
-							Eigen::Matrix<double,
-										  PoseType::Dimension + PointType::Dimension,
-										  PoseType::Dimension + PointType::Dimension>
-								H;
-							Eigen::Matrix<double,
-										  PoseType::Dimension + PointType::Dimension, 1>
-								b, sol;
-							H.setZero();
+						// 	Eigen::Matrix<double,
+						// 				  PoseType::Dimension + PointType::Dimension,
+						// 				  PoseType::Dimension + PointType::Dimension>
+						// 		H;
+						// 	Eigen::Matrix<double,
+						// 				  PoseType::Dimension + PointType::Dimension, 1>
+						// 		b, sol;
+						// 	H.setZero();
 
-							H.block(0, 0, PoseType::Dimension, PoseType::Dimension) =
-								poseHessianCopy;
-							H.block(PoseType::Dimension, PoseType::Dimension,
-									PointType::Dimension, PointType::Dimension) =
-								pointHessian;
+						// 	H.block(0, 0, PoseType::Dimension, PoseType::Dimension) =
+						// 		poseHessianCopy;
+						// 	H.block(PoseType::Dimension, PoseType::Dimension,
+						// 			PointType::Dimension, PointType::Dimension) =
+						// 		pointHessian;
 
-							H.block(0, 0, PoseType::Dimension, PoseType::Dimension) +=
-								Jpose.transpose() * c.poses_[k].Z_[nz]->information() * Jpose;
-							H.block(PoseType::Dimension, PoseType::Dimension,
-									PointType::Dimension, PointType::Dimension) +=
-								Jpoint.transpose() * c.poses_[k].Z_[nz]->information() * Jpoint;
+						// 	H.block(0, 0, PoseType::Dimension, PoseType::Dimension) +=
+						// 		Jpose.transpose() * c.poses_[k].Z_[nz]->information() * Jpose;
+						// 	H.block(PoseType::Dimension, PoseType::Dimension,
+						// 			PointType::Dimension, PointType::Dimension) +=
+						// 		Jpoint.transpose() * c.poses_[k].Z_[nz]->information() * Jpoint;
 
-							H.block(PoseType::Dimension, 0, PointType::Dimension,
-									PoseType::Dimension) = Jpoint.transpose() * c.poses_[k].Z_[nz]->information() * Jpose;
-							H.block(0, PoseType::Dimension, PoseType::Dimension,
-									PointType::Dimension) = H.block(PoseType::Dimension, 0, PointType::Dimension,
-																	PoseType::Dimension)
-																.transpose();
-							b.block(0, 0, PoseType::Dimension, 1) =
-								Jpose.transpose() * omega_r;
-							b.block(PoseType::Dimension, 0, PointType::Dimension, 1) =
-								Jpoint.transpose() * omega_r;
+						// 	H.block(PoseType::Dimension, 0, PointType::Dimension,
+						// 			PoseType::Dimension) = Jpoint.transpose() * c.poses_[k].Z_[nz]->information() * Jpose;
+						// 	H.block(0, PoseType::Dimension, PoseType::Dimension,
+						// 			PointType::Dimension) = H.block(PoseType::Dimension, 0, PointType::Dimension,
+						// 											PoseType::Dimension)
+						// 										.transpose();
+						// 	b.block(0, 0, PoseType::Dimension, 1) =
+						// 		Jpose.transpose() * omega_r;
+						// 	b.block(PoseType::Dimension, 0, PointType::Dimension, 1) =
+						// 		Jpoint.transpose() * omega_r;
 
-							Eigen::LLT<
-								Eigen::Matrix<double,
-											  PoseType::Dimension + PointType::Dimension,
-											  PoseType::Dimension + PointType::Dimension>>
-								lltofH(
-									H);
-							sol = lltofH.solve(b);
-							double poseh_det = poseHessianCopy.determinant();
-							double pointh_det = pointHessian.determinant();
-							double updated_det = lltofH.matrixL().determinant();
-							assert(poseh_det>0);
-							assert(pointh_det>0);
-							assert(updated_det>0);
-							// double increase = std::log(updated_det) - (std::log(poseh_det)+std::log(pointh_det));
+						// 	Eigen::LLT<
+						// 		Eigen::Matrix<double,
+						// 					  PoseType::Dimension + PointType::Dimension,
+						// 					  PoseType::Dimension + PointType::Dimension>>
+						// 		lltofH(
+						// 			H);
+						// 	sol = lltofH.solve(b);
+						// 	double poseh_det = poseHessianCopy.determinant();
+						// 	double pointh_det = pointHessian.determinant();
+						// 	double updated_det = lltofH.matrixL().determinant();
+						// 	assert(poseh_det>0);
+						// 	assert(pointh_det>0);
+						// 	assert(updated_det>0);
+						// 	// double increase = std::log(updated_det) - (std::log(poseh_det)+std::log(pointh_det));
 
-							// p += increase;
-							// if (increase > 0){
-							// 	assert(!isnan(p));
-							// }
-							assert(!isnan(p));
-							double increase = std::log( c.poses_[k].Z_[nz]->information().determinant()) ;
-							p += increase;
-							if (increase > 0){
-								assert(!isnan(p));
-							}
-							//increase = posHLogDet;
+						// 	// p += increase;
+						// 	// if (increase > 0){
+						// 	// 	assert(!isnan(p));
+						// 	// }
+						// 	assert(!isnan(p));
+						// 	double increase = std::log( c.poses_[k].Z_[nz]->information().determinant()) ;
+						// 	p += increase;
+						// 	if (increase > 0){
+						// 		assert(!isnan(p));
+						// 	}
+						// 	//increase = posHLogDet;
 
-							// if (increase > 0){
-							// 	assert(!isnan(p));
-							// }
+						// 	// if (increase > 0){
+						// 	// 	assert(!isnan(p));
+						// 	// }
 
-							// p += increase;
-							assert(!isnan(p));
+						// 	// p += increase;
+						// 	assert(!isnan(p));
 
-							p += -0.5 * (c.poses_[k].Z_[nz]->chi2() - sol.dot(b));
-							assert(!isnan(p));
-							p += -0.5 * c.poses_[k].Z_[nz]->dimension() * std::log(2 * M_PI);
-							assert(!isnan(p));
-						}
-						else
+						// 	p += -0.5 * (c.poses_[k].Z_[nz]->chi2() - sol.dot(b));
+						// 	assert(!isnan(p));
+						// 	p += -0.5 * c.poses_[k].Z_[nz]->dimension() * std::log(2 * M_PI);
+						// 	assert(!isnan(p));
+						// }
+						// else
 						{ // if pose is fixed only calculate updated landmark
 							//c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->solveDirect();
 							//auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
 							
-							PointType::HessianBlockType::PlainMatrix h;
-							PointType::HessianBlockType pointHessian(h.data());
+							// PointType::HessianBlockType::PlainMatrix h;
+							// PointType::HessianBlockType pointHessian(h.data());
 
-							StereoMeasurementEdge::JacobianXiOplusType Jpoint =
-								c.poses_[k].Z_[nz]->jacobianOplusXi();
+							// StereoMeasurementEdge::JacobianXiOplusType Jpoint =
+							// 	c.poses_[k].Z_[nz]->jacobianOplusXi();
 
-							if (lm.numDetections_ != lm.pPoint->edges().size() ){
-								checkDA(c);
-								assert(0);
-							}
+							// if (lm.numDetections_ != lm.pPoint->edges().size() ){
+							// 	checkDA(c);
+							// 	assert(0);
+							// }
 
-							if (lm.numDetections_ > 0)
-							{
-								new (&pointHessian) PointType::HessianBlockType(
-									c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
+							// if (lm.numDetections_ > 0)
+							// {
+							// 	new (&pointHessian) PointType::HessianBlockType(
+							// 		c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
 
-								// std::cout << "g2o pointH: " << pointHessian << "\n\n\n";
-							}
-							else
-							{
-								h = config.anchorInfo_;
-								// std::cout << "calc pointH: " << pointHessian << "\n\n\n";
-							}
+							// 	// std::cout << "g2o pointH: " << pointHessian << "\n\n\n";
+							// }
+							// else
+							// {
+							// 	h = config.anchorInfo_;
+							// 	// std::cout << "calc pointH: " << pointHessian << "\n\n\n";
+							// }
 
-							Eigen::Matrix<double, PointType::Dimension,
-										  PointType::Dimension>
-								H, ph ;
-								ph = pointHessian;
-							H.setZero();
-							if (pointHessian.allFinite()){
-								H = pointHessian + Jpoint.transpose() * c.poses_[k].Z_[nz]->information() * Jpoint;
-							}else{
-								H =  Jpoint.transpose() * c.poses_[k].Z_[nz]->information() * Jpoint;
+							// Eigen::Matrix<double, PointType::Dimension,
+							// 			  PointType::Dimension>
+							// 	H, ph ;
+							// 	ph = pointHessian;
+							// H.setZero();
+							// if (pointHessian.allFinite()){
+							// 	H = pointHessian + Jpoint.transpose() * c.poses_[k].Z_[nz]->information() * Jpoint;
+							// }else{
+							// 	H =  Jpoint.transpose() * c.poses_[k].Z_[nz]->information() * Jpoint;
 
-							}
-							Eigen::Matrix<double, PointType::Dimension, 1> b, sol;
-							b = Jpoint.transpose() * omega_r;
+							// }
+							// Eigen::Matrix<double, PointType::Dimension, 1> b, sol;
+							// b = Jpoint.transpose() * omega_r;
 
 							// Eigen::LLT<
 							// 	Eigen::Matrix<double, PointType::Dimension,
@@ -3718,7 +3741,7 @@ void print_map(const MapType & m)
 												  dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.optimizer_->vertices().find(
 																															selectedDA)
 																									->second));
-					c.poses_[k].Z_[nz]->linearizeOplus();
+					//c.poses_[k].Z_[nz]->linearizeOplus();
 					c.poses_[k].Z_[nz]->computeError();
 					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
 				}
@@ -3804,6 +3827,7 @@ void print_map(const MapType & m)
 
 		point_world_frame = pose.pPose->estimate().inverse().map(pose.point_camera_frame[numMatch]);
 		lm.pPoint->setEstimate(point_world_frame);
+		lm.pPoint->setMarginalized(true);
 		lm.birthTime_ = pose.stamp;
 
 
