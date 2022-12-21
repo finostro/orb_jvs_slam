@@ -97,8 +97,8 @@ ENDIF()
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}   -DLLVM_ENABLE_EXPENSIVE_CHECKS=ON")
 # sanitizer
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   -fsanitize=address  -fno-omit-frame-pointer")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -fsanitize=address  -fno-omit-frame-pointer")
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   -fsanitize=address  -fno-omit-frame-pointer")
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -fsanitize=address  -fno-omit-frame-pointer")
 
 if (USE_SANITIZER STREQUAL "Address")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address  -fno-omit-frame-pointer")
@@ -124,7 +124,8 @@ else()
     SET(USE_SANITIZER "disabled" CACHE STRING "set sanitizer type.")
 endif()
     
-    
+message("enabling cpu profiler ${USE_CPU_PROFILER}")
+ADD_DEFINITIONS(-D_PERFTOOLS_CPU)
     # Google perftools
 FIND_PACKAGE(Perftools)
 IF(Perftools_FOUND)
@@ -289,6 +290,6 @@ ADD_EXECUTABLE(vglmbslam6d src/vglmbslam6d_euroc.cpp  src/external/ORBextractor.
 # ${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES}   )
 
 TARGET_LINK_LIBRARIES(vglmbslam6d  ${YAML_CPP_LIBRARIES} glog::glog  ${Boost_LIBRARIES} rfsslam  ${CSPARSE_LIBRARY} g2o_core_rd g2o_csparse_extension_rd g2o_solver_csparse_rd g2o_types_slam3d_rd g2o_types_sba_rd g2o_types_sim3_rd  g2o_stuff_rd  
-${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES}   )
+${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${Perftools_PROFILER_LIBRARY}  )
 
 

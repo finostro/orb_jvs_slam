@@ -3373,7 +3373,7 @@ void print_map(const MapType & m)
 				for (int lm = 0; lm < c.landmarks_.size(); lm++)
 				{
 
-					//if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[k].stamp))
+					if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp))
 					//if ( (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp))
 					{
 						double predScale=0;
