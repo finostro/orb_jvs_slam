@@ -1987,14 +1987,15 @@ void print_map(const MapType & m)
 
 			
 			auto &c = components_[i];
-			for (int k=0; k< minpose_;k+=2){
-				if(k%5!=0){
-					 for(int nz=0; nz < c.poses_[k].Z_.size();nz++){
-					 	c.poses_[k].Z_[nz]->setLevel(2);
-					 }
-					//c.poses_[k].pPose->setMarginalized(true);
-				}
-			}
+			// for (int k=0; k< minpose_;k+=2){
+			// 	if(k%5!=0){
+			// 		 for(int nz=0; nz < c.poses_[k].Z_.size();nz++){
+			// 		 	//c.poses_[k].Z_[nz]->setLevel(2);
+			// 			c.optimizer_->removeEdge(c.poses_[k].Z_[nz]);
+			// 		 }
+			// 		//c.poses_[k].pPose->setMarginalized(true);
+			// 	}
+			// }
 			for(int k = 1; k< maxpose_ ; k++){
 				c.odometries_[k-1]->setLevel(0);
 			}
@@ -2013,9 +2014,9 @@ void print_map(const MapType & m)
 			for(int k = 0; k< config.staticframes-config.minframe ; k++){
 				c.poses_[k].pPose->setFixed(true);
 			}
-			for(int k = std::max(config.staticframes-config.minframe,0); k< minpose_ ; k++){
-				c.poses_[k].pPose->setFixed(true);
-			}
+			// for(int k = std::max(config.staticframes-config.minframe,0); k< minpose_ ; k++){
+			// 	c.poses_[k].pPose->setFixed(true);
+			// }
 			c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
 			//c.optimizer_->computeInitialGuess();
@@ -2195,9 +2196,9 @@ void print_map(const MapType & m)
 			for(int k = 0; k< config.staticframes-config.minframe ; k++){
 				c.poses_[k].pPose->setFixed(true);
 			}
-			for(int k = std::max(config.staticframes-config.minframe,0); k< minpose_ ; k++){
-				c.poses_[k].pPose->setFixed(true);
-			}
+			// for(int k = std::max(config.staticframes-config.minframe,0); k< minpose_ ; k++){
+			// 	c.poses_[k].pPose->setFixed(true);
+			// }
 			c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
 			//c.optimizer_->computeInitialGuess();
@@ -2356,6 +2357,8 @@ void print_map(const MapType & m)
 		double pd_logw =0;
 		double kappa_logw =0;
 		double info_logw =0;
+		double descriptor_logw=0;
+		double scale_logw=0;
 		for (int k = 0; k < c.poses_.size(); k++)
 		{
 			for (int nz = 0; nz < c.poses_[k].Z_.size(); nz++)
@@ -2375,6 +2378,29 @@ void print_map(const MapType & m)
 					info_logw +=
 						-0.5 * (c.poses_[k].Z_[nz]->dimension() * std::log(2 * M_PI) - std::log(
 																						   c.poses_[k].Z_[nz]->information().determinant()));
+
+
+										StereoMeasurementEdge  &z = *c.poses_[k].Z_[nz];
+
+						auto &lm = c.landmarks_[selectedDA - c.landmarks_[0].id];
+						int lmFovIdx =-1;
+						for (int n=0;n< c.poses_[k].fov_.size();n++){
+							if(c.poses_[k].fov_[n]==lm.id){
+								lmFovIdx=n;
+								break;
+							}
+						}
+						assert(lmFovIdx>=0);
+						int predictedScale = c.poses_[k].predicted_scales[lmFovIdx];
+						int scalediff = abs(predictedScale-c.poses_[k].keypoints_left[c.poses_[k].matches_left_to_right[nz].queryIdx].octave );
+
+						scale_logw += 20-20.0*scalediff;
+						//int dist = ORBDescriptor::distance(lm.descriptor, c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
+						double desclikelihood = lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
+
+						descriptor_logw += desclikelihood;
+
+
 				}
 			}
 
@@ -2398,6 +2424,8 @@ void print_map(const MapType & m)
 		logw += pd_logw;
 		logw += kappa_logw;
 		logw += info_logw;
+		logw += descriptor_logw;
+		logw += scale_logw;
 		double lm_exist_w=0;
 		for (int lm = 0; lm < c.landmarks_.size(); lm++)
 		{
@@ -2412,7 +2440,12 @@ void print_map(const MapType & m)
 		double det_logw = -0.5* c.linearSolver_->_determinant;
 
 		logw += chi_logw+det_logw;
-		 std::cout << termcolor::blue << "weight: " <<logw << " det_logw: " <<     det_logw  << " pd_logw: " <<     pd_logw  << " kappa_logw: " <<     kappa_logw  << " info_logw: " <<     info_logw << " lm_exist_w: " <<     lm_exist_w << "\n"      <<termcolor::reset <<"\n";
+		 std::cout << termcolor::blue << "weight: " <<logw << " det_logw: " <<     det_logw  
+		 	<< " pd_logw: " <<     pd_logw  << " kappa_logw: " <<     kappa_logw  
+			<< " info_logw: " <<     info_logw 
+			<< " lm_exist_w: " <<     lm_exist_w 
+			<< " descriptor_logw: " <<     descriptor_logw 
+			<< " scale_logw: " <<     scale_logw << "\n"      <<termcolor::reset <<"\n";
 		assert(!isnan(logw));
 		c.prevLogWeight_ = c.logweight_;
 		c.logweight_ = logw;
@@ -3510,13 +3543,13 @@ void print_map(const MapType & m)
 						auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
 						int predictedScale = c.poses_[k].predicted_scales[lmFovIdx];
 						int scalediff = abs(predictedScale-c.poses_[k].keypoints_left[c.poses_[k].matches_left_to_right[nz].queryIdx].octave );
-						if(scalediff >3){
+						if(scalediff >2){
 							continue;
 						}
 						p += 20-20.0*scalediff;
 						//int dist = ORBDescriptor::distance(lm.descriptor, c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
 						double desclikelihood = lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
-						if (desclikelihood < -100*1.0){
+						if (!std::isfinite(desclikelihood) ){
 							continue;
 						}
 						p += desclikelihood;
@@ -3827,7 +3860,7 @@ void print_map(const MapType & m)
 
 		point_world_frame = pose.pPose->estimate().inverse().map(pose.point_camera_frame[numMatch]);
 		lm.pPoint->setEstimate(point_world_frame);
-		lm.pPoint->setMarginalized(true);
+		//lm.pPoint->setMarginalized(true);
 		lm.birthTime_ = pose.stamp;
 
 

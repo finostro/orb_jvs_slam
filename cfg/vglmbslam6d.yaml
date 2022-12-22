@@ -5,12 +5,12 @@ lmExistenceProb: 0.01
 
 minframe: 50
 maxframe: 6000
-staticframes: 70
+staticframes: 0
 
 PE: 1e-10
-logExistenceOdds: -600
+logExistenceOdds: -500
 PD: 0.8
-numIterations: 4000
+numIterations: 2000
 numGibbs: 60
 numLandmarks: 100
 numComponents: 16
@@ -20,10 +20,10 @@ tempFactor: 0.995
 initTemp: 1
 birthDeathNumIter: 1
 crossoverNumIter: 13300
-numPosesToOptimize: 50
+numPosesToOptimize: 20
 
 perturbTrans: 0.001
-perturbRot: 0.004
+perturbRot: 0.006
 
 
 finalStateFile: optimizedState.g2o
@@ -51,8 +51,7 @@ stereoInfo:
     data: [2.0 , 0.0 , 0.0 ,
     0.0 , 2.00 , 0.0 ,
     0.0 , 0.0 , 2.00 ]
-logKappa: -100.0
-
+logKappa: -20140 #-(540+60*60)
 
 viewingCosLimit: 0.5
 use_gui: true

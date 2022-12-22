@@ -94,11 +94,12 @@ namespace rfs{
 
       double likelihood(const ORBDescriptor &other){
         double d = distance(*this, other);
+        if (d > 100) return -std::numeric_limits<double>::infinity();
         static  double a = std::log(1.0/8.0);
         static  double b = std::log(7.0/8.0);
         static  double c = std::log(1.0/2.0);
         static constexpr double f = -1.0;
-        double ret =d*f;
+        double ret =d*d*f;
         //std::cout << d << "\n";
         return  ret;
       }
