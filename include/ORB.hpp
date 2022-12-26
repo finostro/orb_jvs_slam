@@ -92,9 +92,9 @@ namespace rfs{
         return retval;
       }
 
-      double likelihood(const ORBDescriptor &other){
-        double d = distance(*this, other);
-        if (d > 100) return -std::numeric_limits<double>::infinity();
+      double likelihood(const ORBDescriptor &left, const ORBDescriptor &right){
+        double d = distance(*this, left)+distance(*this, right);
+        if (d > 200) return -std::numeric_limits<double>::infinity();
         static  double a = std::log(1.0/8.0);
         static  double b = std::log(7.0/8.0);
         static  double c = std::log(1.0/2.0);

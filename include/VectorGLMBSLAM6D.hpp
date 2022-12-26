@@ -2207,6 +2207,8 @@ void print_map(const MapType & m)
 				std::cerr << "info is bad\n";
 			}
 			int niterations = opt3(c.optimizer_ , ni);
+			updateMetaStates(c);
+			updateFoV(c);
 			//assert(niterations > 0);
 			// std::cout <<"niterations  " <<c.optimizer_->optimize(ni) << "\n";
 			calculateWeight(c);
@@ -2391,14 +2393,35 @@ void print_map(const MapType & m)
 							}
 						}
 						assert(lmFovIdx>=0);
-						int predictedScale = c.poses_[k].predicted_scales[lmFovIdx];
-						int scalediff = abs(predictedScale-c.poses_[k].keypoints_left[c.poses_[k].matches_left_to_right[nz].queryIdx].octave );
+						assert(c.poses_[k].predicted_scales.size() == c.poses_[k].fov_.size() );
+						if (lmFovIdx<0){
+							std::cout << "ERROR lmid: " << lm.id << "\n";
+							std::cout << "k: " << k << "\n";
+							std::cout << "fov: ";
+							for (int kk:c.poses_[k].fov_) {
+								std::cout << kk << "  ";
+								}
+							std::cout << "\n";
+							scale_logw += -std::numeric_limits<double>::infinity();
+						}else{
+							int predictedScale = c.poses_[k].predicted_scales[lmFovIdx];
+							int scalediff = abs(predictedScale-c.poses_[k].keypoints_left[c.poses_[k].matches_left_to_right[nz].queryIdx].octave );
 
-						scale_logw += 20-20.0*scalediff;
+							scale_logw += 20-20.0*scalediff;
+						}
 						//int dist = ORBDescriptor::distance(lm.descriptor, c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
-						double desclikelihood = lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
+						double desclikelihood = lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx] , c.poses_[k].descriptors_right[c.poses_[k].matches_left_to_right[nz].trainIdx]);
 
 						descriptor_logw += desclikelihood;
+						if (!std::isfinite(descriptor_logw)){
+							for (int kk:lm.is_in_fov_){
+								auto it = c.DA_bimap_[kk].right.find(lm.id);
+								if (it != c.DA_bimap_[kk].right.end()){
+									std::cout << "k " << kk << " nz  " <<it->second << "\n";
+								}
+							}
+							assert(0);
+						}
 
 
 				}
@@ -3357,7 +3380,12 @@ void print_map(const MapType & m)
 					
 					std::vector<int> avg_desc(256,0);
 					map_point.normalVector.setZero();
-					double depth=0;
+					double avg_depth=0;
+					double max_depth=0;
+					double min_depth= std::numeric_limits<double>::infinity();
+
+					// std::vector<ORBDescriptor*> descriptors;
+					// std::vector<int> distances_bef, distances_after;
 
 
 					for (auto &edge: map_point.pPoint->edges()){
@@ -3371,6 +3399,10 @@ void print_map(const MapType & m)
 						int nr = c.poses_[posenum].matches_left_to_right[nz].trainIdx;
 						auto &desc_left = c.poses_[posenum].descriptors_left[nl];
 						auto &desc_right = c.poses_[posenum].descriptors_right[nr];
+						// distances_bef.push_back(ORBDescriptor::distance(map_point.descriptor , desc_left));
+						// distances_bef.push_back(ORBDescriptor::distance(map_point.descriptor , desc_right));
+						// descriptors.push_back(&c.poses_[posenum].descriptors_left[nl]);
+						// descriptors.push_back(&c.poses_[posenum].descriptors_right[nr]);
 						for(int i=0;i<256;i++){
 							if (desc_left.desc[i])
 								avg_desc[i]++;
@@ -3380,25 +3412,37 @@ void print_map(const MapType & m)
 						Eigen::Vector3d lmpos = map_point.pPoint->estimate();
 						Eigen::Vector3d poset = c.poses_[posenum].pPose->estimate().translation();
 						int level = c.poses_[posenum].keypoints_left[nl].octave;
-
-						depth +=(lmpos-poset).norm()*c.poses_[posenum].mvScaleFactors[level];
+						double depth = (lmpos-poset).norm();
+						if (max_depth<depth){
+							max_depth = depth;
+						}
+						if (min_depth > depth){
+							min_depth = depth;
+						}
+						avg_depth +=depth*c.poses_[posenum].mvScaleFactors[level];
 						map_point.normalVector += (lmpos-poset).normalized();
 
 					}
 					assert(map_point.numDetections_ == map_point.pPoint->edges().size());
-					depth = depth/map_point.numDetections_;
-					map_point.mfMaxDistance = 1.2*depth;
+					avg_depth = avg_depth/map_point.numDetections_;
+					map_point.mfMaxDistance = std::max( 1.2*avg_depth , 1.1*max_depth);
 					//assert(map_point.mfMaxDistance<10.0);
-					map_point.mfMinDistance = map_point.mfMaxDistance / c.poses_[0].mvScaleFactors[ c.poses_[0].mnScaleLevels - 1] * 0.8;
+					map_point.mfMinDistance = std::min(map_point.mfMaxDistance / c.poses_[0].mvScaleFactors[ c.poses_[0].mnScaleLevels - 1] * 0.8 , 0.9*min_depth);
+
+					assert(max_depth < map_point.mfMaxDistance);
+					assert(min_depth > map_point.mfMinDistance);
 
 					for(int i=0;i<256;i++){
 						map_point.descriptor.desc[i] = avg_desc[i]>map_point.numDetections_;
 					}
+					// for (auto desc:descriptors){
+					// 	distances_after.push_back(ORBDescriptor::distance(map_point.descriptor , *desc));
+					// }
 					map_point.normalVector.normalize();
 
 				}else{
 					map_point.normalVector = map_point.birthPose->point_camera_frame[map_point.birthMatch].normalized();
-					map_point.descriptor = map_point.birthPose->descriptors_left[map_point.birthMatch];
+					map_point.descriptor = map_point.birthPose->descriptors_left[map_point.birthPose->matches_left_to_right[map_point.birthMatch].queryIdx];
 
 				}
 
@@ -3428,6 +3472,9 @@ void print_map(const MapType & m)
 
 				for (int lm = 0; lm < c.landmarks_.size(); lm++)
 				{
+					auto it = c.DA_bimap_[k].right.find(c.landmarks_[lm].id);
+					bool associated = it != c.DA_bimap_[k].right.end();
+					bool isInFov = false;
 
 					if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp))
 					//if ( (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp))
@@ -3442,8 +3489,12 @@ void print_map(const MapType & m)
 							c.landmarks_[lm].is_in_fov_.push_back(k);
 							c.landmarks_[lm].predicted_scales.push_back(predScale);
 							c.landmarks_[lm].numFoV_++;
+							isInFov = true;
 						}
 					}
+					// if (associated){
+					// 	assert(isInFov);
+					// }
 				}
 			}
 		}
@@ -3548,7 +3599,7 @@ void print_map(const MapType & m)
 						}
 						p += 20-20.0*scalediff;
 						//int dist = ORBDescriptor::distance(lm.descriptor, c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
-						double desclikelihood = lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
+						double desclikelihood = lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx] , c.poses_[k].descriptors_right[c.poses_[k].matches_left_to_right[nz].trainIdx]);
 						if (!std::isfinite(desclikelihood) ){
 							continue;
 						}
@@ -3840,8 +3891,6 @@ void print_map(const MapType & m)
 		lm.numFoV_ = 0;
 		int level = pose.keypoints_left[nl].octave;
 		const int nLevels = pose.mnScaleLevels;
-		lm.mfMaxDistance = pose.depth[nl] * pose.mvScaleFactors[level] * 1.2;
-		lm.mfMinDistance = lm.mfMaxDistance / pose.mvScaleFactors[nLevels - 1] * 0.8;
 
 		if (!cam_unproject(*pose.Z_[numMatch], pose.point_camera_frame[numMatch]))
 		{
@@ -3850,6 +3899,8 @@ void print_map(const MapType & m)
 			return false;
 		}
 
+		lm.mfMaxDistance = pose.point_camera_frame[numMatch].norm() * pose.mvScaleFactors[level] * 1.2;
+		lm.mfMinDistance = lm.mfMaxDistance / pose.mvScaleFactors[nLevels - 1] * 0.8;
 		pose.initial_lm_id[numMatch] = newId;
 		//pose.Z_[numMatch]->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(lm.pPoint));
 

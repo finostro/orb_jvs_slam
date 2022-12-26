@@ -10,7 +10,7 @@ staticframes: 0
 PE: 1e-10
 logExistenceOdds: -500
 PD: 0.8
-numIterations: 2000
+numIterations: 1000
 numGibbs: 60
 numLandmarks: 100
 numComponents: 16
@@ -51,7 +51,7 @@ stereoInfo:
     data: [2.0 , 0.0 , 0.0 ,
     0.0 , 2.00 , 0.0 ,
     0.0 , 0.0 , 2.00 ]
-logKappa: -20140 #-(540+60*60)
+logKappa: -5140 #-(540+60*60)
 
 viewingCosLimit: 0.5
 use_gui: true
