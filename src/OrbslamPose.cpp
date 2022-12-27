@@ -74,7 +74,9 @@ namespace rfs
 
             // Check viewing angle
             Eigen::Vector3d Pn = pMP->normalVector;
-            const float viewCos = point_in_camera_frame.dot(Pn) / dist;
+            Eigen::Vector3d viewingVector =pMP->pPoint->estimate()-invPose.translation();
+            
+            const float viewCos = viewingVector.dot(Pn) / dist;
 
             if (viewCos < viewingCosLimit)
                 return false;

@@ -348,6 +348,7 @@ void print_map(const MapType & m)
 			int minframe;
 			int maxframe;
 			int staticframes;
+			double maxWeightDifference;
 		} config;
 
 		/**
@@ -407,6 +408,13 @@ void print_map(const MapType & m)
 		 * @param ni number of iterations of the optimizer
 		 */
 		void sampleComponents();
+
+		/**
+		 *
+		 * Update the ROS style poses, run every time after running g2o optimizer
+		 * @param c the GLMB component
+		 */
+		void updatePoses(VectorGLMBComponent6D &c);
 
 		void updateDescriptors(VectorGLMBComponent6D &c);
 		void perturbTraj(VectorGLMBComponent6D &c);
@@ -1312,6 +1320,8 @@ void print_map(const MapType & m)
 		config.maxframe = node["maxframe"].as<int>();
 		config.staticframes = node["staticframes"].as<int>();
 
+		config.maxWeightDifference = node["maxWeightDifference"].as<double>();
+
 		config.crossoverNumIter_ = node["crossoverNumIter"].as<int>();
 		config.numPosesToOptimize_ = node["numPosesToOptimize"].as<int>();
 		config.finalStateFile_ = node["finalStateFile"].as<std::string>();
@@ -1608,6 +1618,13 @@ void print_map(const MapType & m)
 			std::cout << "iteration: " << iteration_ << " / " << numSteps << "\n";
 			optimize(config.numLevenbergIterations_);
 		}
+	}
+
+	void VectorGLMBSLAM6D::updatePoses(VectorGLMBComponent6D &c){
+		for(int k=0; k<c.poses_.size() ;k++){
+			c.poses_[k].invPose = c.poses_[k].pPose->estimate().inverse();
+		}
+
 	}
 
 	void VectorGLMBSLAM6D::updateDescriptors(VectorGLMBComponent6D &c){
@@ -2102,6 +2119,7 @@ void print_map(const MapType & m)
 					// c.poses_[0].pPose->setFixed(true);
 					c.optimizer_->initializeOptimization();
 					int niterations = opt2(c.optimizer_ , 1);
+					updatePoses(c);
 					updateMetaStates(c);
 
 					moveBirth(c);
@@ -2207,6 +2225,7 @@ void print_map(const MapType & m)
 				std::cerr << "info is bad\n";
 			}
 			int niterations = opt3(c.optimizer_ , ni);
+			updatePoses(c);
 			updateMetaStates(c);
 			updateFoV(c);
 			//assert(niterations > 0);
@@ -2251,7 +2270,7 @@ void print_map(const MapType & m)
 
 			#pragma omp critical(bestweight)
 			{
-				if (c.logweight_ > bestWeight_-10000){
+				if (c.logweight_ > bestWeight_-config.maxWeightDifference){
 					std::tie(it, inserted) = visited_.insert(pair);
 					insertionP_ = insertionP_ * 0.99;
 					if (inserted){
@@ -2303,7 +2322,7 @@ void print_map(const MapType & m)
 					}
 
 					for (auto i = visited_.begin(), last = visited_.end(); i != last; ) {
-					if (i->second.weight < bestWeight_-10000 ) {
+					if (i->second.weight < bestWeight_-config.maxWeightDifference ) {
 						i = visited_.erase(i);
 					} else {
 						++i;
@@ -2395,13 +2414,13 @@ void print_map(const MapType & m)
 						assert(lmFovIdx>=0);
 						assert(c.poses_[k].predicted_scales.size() == c.poses_[k].fov_.size() );
 						if (lmFovIdx<0){
-							std::cout << "ERROR lmid: " << lm.id << "\n";
-							std::cout << "k: " << k << "\n";
-							std::cout << "fov: ";
-							for (int kk:c.poses_[k].fov_) {
-								std::cout << kk << "  ";
-								}
-							std::cout << "\n";
+							// std::cout << "ERROR lmid: " << lm.id << "\n";
+							// std::cout << "k: " << k << "\n";
+							// std::cout << "fov: ";
+							// for (int kk:c.poses_[k].fov_) {
+							// 	std::cout << kk << "  ";
+							// 	}
+							// std::cout << "\n";
 							scale_logw += -std::numeric_limits<double>::infinity();
 						}else{
 							int predictedScale = c.poses_[k].predicted_scales[lmFovIdx];
@@ -3395,6 +3414,7 @@ void print_map(const MapType & m)
 						auto it = c.DA_bimap_[posenum].right.find(map_point.id);
 						assert ( it != c.DA_bimap_[posenum].right.end() );
 						int nz = it->second;
+						assert(edge == c.poses_[posenum].Z_[nz]);
 						int nl = c.poses_[posenum].matches_left_to_right[nz].queryIdx;
 						int nr = c.poses_[posenum].matches_left_to_right[nz].trainIdx;
 						auto &desc_left = c.poses_[posenum].descriptors_left[nl];
@@ -3410,7 +3430,7 @@ void print_map(const MapType & m)
 								avg_desc[i]++;
 						}
 						Eigen::Vector3d lmpos = map_point.pPoint->estimate();
-						Eigen::Vector3d poset = c.poses_[posenum].pPose->estimate().translation();
+						Eigen::Vector3d poset = c.poses_[posenum].invPose.translation();
 						int level = c.poses_[posenum].keypoints_left[nl].octave;
 						double depth = (lmpos-poset).norm();
 						if (max_depth<depth){
@@ -3435,8 +3455,14 @@ void print_map(const MapType & m)
 					for(int i=0;i<256;i++){
 						map_point.descriptor.desc[i] = avg_desc[i]>map_point.numDetections_;
 					}
+					// int ii=0;
 					// for (auto desc:descriptors){
 					// 	distances_after.push_back(ORBDescriptor::distance(map_point.descriptor , *desc));
+					// 	ii++;
+					// 	if(ii%2 ==0 ){
+					// 		assert(distances_after[ii-1]+distances_after[ii-2] <=200);
+					// 	}
+						
 					// }
 					map_point.normalVector.normalize();
 
@@ -3461,7 +3487,7 @@ void print_map(const MapType & m)
 			map_point.predicted_scales.resize(0);
 		}
 
-		for (int k = minpose_; k < maxpose_; k++)
+		for (int k = 0; k < maxpose_; k++)
 		{
 
 			c.poses_[k].fov_.clear();
@@ -3810,10 +3836,10 @@ void print_map(const MapType & m)
 						avg_desc_likelihood += desclikelihood;
 					}
 				}
-				avg_desc_likelihood /= c.DAProbs_[k][nz].l.size()-1;
-				for (int nl =1; nl < c.DAProbs_[k][nz].l.size(); nl++){
-					c.DAProbs_[k][nz].l[nl] -= avg_desc_likelihood;
-				}
+				// avg_desc_likelihood /= c.DAProbs_[k][nz].l.size()-1;
+				// for (int nl =1; nl < c.DAProbs_[k][nz].l.size(); nl++){
+				// 	c.DAProbs_[k][nz].l[nl] -= avg_desc_likelihood;
+				// }
 
 
 
@@ -3915,7 +3941,7 @@ void print_map(const MapType & m)
 		lm.birthTime_ = pose.stamp;
 
 
-		lm.normalVector = (point_world_frame - pose.pPose->estimate().translation()).normalized();
+		lm.normalVector = (point_world_frame - pose.pPose->estimate().inverse().translation()).normalized();
 		//pose.Z_[numMatch]->computeError();
 
 		return true;

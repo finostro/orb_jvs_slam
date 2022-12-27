@@ -49,7 +49,8 @@ namespace rfs
         typedef g2o::EdgeProjectXYZ2UV MonocularMeasurementEdge;
         typedef g2o::EdgeStereoSE3ProjectXYZ StereoMeasurementEdge;
 
-        PoseType *pPose;
+        PoseType *pPose; // this transforms world coordinates into camera coordinates
+        g2o::SE3Quat invPose; // inverse of optimizer , this is the common interpretation. as in ros TF 
 
         // Scale
          int mnScaleLevels;
