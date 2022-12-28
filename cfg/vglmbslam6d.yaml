@@ -8,7 +8,7 @@ maxframe: 6000
 staticframes: 0
 
 PE: 1e-10
-logExistenceOdds: -1700
+logExistenceOdds: -2700
 PD: 0.8
 numIterations: 2000
 numGibbs: 20
