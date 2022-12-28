@@ -724,6 +724,7 @@ void print_map(const MapType & m)
 		int nmap=0;
 		for (int i = 0; i < c.landmarks_.size(); i++)
 		{
+			auto &lm=c.landmarks_[i];
 			if (c.landmarks_[i].numDetections_ > 0)
 			{
 
@@ -731,7 +732,9 @@ void print_map(const MapType & m)
 				map_cloud->at(nmap).y = c.landmarks_[i].pPoint->estimate()[1];
 				map_cloud->at(nmap).z = c.landmarks_[i].pPoint->estimate()[2];
 				
-				map_cloud->at(nmap).intensity = c.landmarks_[i].numDetections_;
+				map_cloud->at(nmap).intensity = c.landmarks_[i].numDetections_ / (float)c.landmarks_[i].numFoV_;
+
+				// map_cloud->at(nmap).intensity = std::binary_search(lm.is_in_fov_.begin(), lm.is_in_fov_.end(), c.maxpose_-1);
 
 				nmap++;
 			}
@@ -2004,7 +2007,7 @@ void print_map(const MapType & m)
 
 			
 			auto &c = components_[i];
-			// for (int k=0; k< minpose_;k+=2){
+			// for (int k=0; k< minpose_;k++){
 			// 	if(k%5!=0){
 			// 		 for(int nz=0; nz < c.poses_[k].Z_.size();nz++){
 			// 		 	//c.poses_[k].Z_[nz]->setLevel(2);
@@ -2759,7 +2762,7 @@ void print_map(const MapType & m)
 			//
 			//c.landmarksInitProb_[i] = c.landmarksInitProb_[i] / (c.landmarks_[i].numFoV_ * config.PD_);
 			double numdet = c.landmarksInitProb_[i];
-			c.landmarksInitProb_[i] =-(numdet)*config.logKappa_ +(numdet) * std::log(config.PD_) + (c.landmarks_[i].numFoV_ - numdet) * std::log(1 - config.PD_) + config.logExistenceOdds;
+			//c.landmarksInitProb_[i] =-(numdet)*config.logKappa_ +c.landmarksInitProb_[i]+ config.logExistenceOdds;
 			
 			double aux= exp(c.landmarksInitProb_[i] );
 			double p = aux/(1+aux);
@@ -2767,7 +2770,7 @@ void print_map(const MapType & m)
 			{
 				// reset all associations to false alarms
 				expectedWeightChange += (config.logKappa_ + (1 - config.PD_)) * c.landmarks_[i].numFoV_;
-				int numdet = 0;
+				//int numdet = 0;
 				for (int k = minpose_; k < maxpose_; k++)
 				{
 					double maxl = -std::numeric_limits<double>::infinity();
@@ -2804,7 +2807,8 @@ void print_map(const MapType & m)
 				 std::cout << termcolor::green << "LANDMARK BORN "
 				 << termcolor::reset << " initprob: "
 				 << c.landmarksInitProb_[i] << " numDet "
-				 << c.landmarks_[i].numDetections_ << " numfov: "
+				 << c.landmarks_[i].numDetections_ << " nd: "
+				 << numdet << " numfov: "
 				 << c.landmarks_[i].numFoV_ << "  expectedChange "
 				 << expectedWeightChange << "\n";
 				 
@@ -3182,7 +3186,7 @@ void print_map(const MapType & m)
 
 		std::fill(c.landmarksResetProb_.begin(), c.landmarksResetProb_.end(),
 				  -config.logExistenceOdds);
-		std::fill(c.landmarksInitProb_.begin(), c.landmarksInitProb_.end(), 0.0);
+		std::fill(c.landmarksInitProb_.begin(), c.landmarksInitProb_.end(), config.logExistenceOdds);
 		for (int k = minpose_; k < maxpose_; k++)
 		{
 
@@ -3327,7 +3331,7 @@ void print_map(const MapType & m)
 					if (c.DAProbs_[k][nz].i[maxlikelihoodi] >= 0)
 					{
 						// std::cout << "increasing init prob of lm " <<c.DAProbs_[k][nz].i[maxlikelihoodi] << "  by " <<maxlikelihood  << "- " << probs.l[sample]<< "\n";
-						c.landmarksInitProb_[c.DAProbs_[k][nz].i[maxlikelihoodi] - c.landmarks_[0].pPoint->id()] += 1;
+						c.landmarksInitProb_[c.DAProbs_[k][nz].i[maxlikelihoodi] - c.landmarks_[0].pPoint->id()] += maxlikelihood-config.logKappa_;
 					}
 				}
 
@@ -3506,7 +3510,7 @@ void print_map(const MapType & m)
 					//if ( (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp))
 					{
 						double predScale=0;
-						if (c.poses_[k].isInFrustum(&c.landmarks_[lm],
+						if (associated || c.poses_[k].isInFrustum(&c.landmarks_[lm],
 													config.viewingCosLimit_, config.g2o_cam_params, &predScale))
 						{
 
@@ -3937,7 +3941,7 @@ void print_map(const MapType & m)
 
 		point_world_frame = pose.pPose->estimate().inverse().map(pose.point_camera_frame[numMatch]);
 		lm.pPoint->setEstimate(point_world_frame);
-		//lm.pPoint->setMarginalized(true);
+		lm.pPoint->setMarginalized(true);
 		lm.birthTime_ = pose.stamp;
 
 
@@ -4047,7 +4051,7 @@ void print_map(const MapType & m)
 		}
 
 		c.landmarksResetProb_.resize(c.landmarks_.size(), 0.0);
-		c.landmarksInitProb_.resize(c.landmarks_.size(), 0.0);
+		c.landmarksInitProb_.resize(c.landmarks_.size(), config.logExistenceOdds);
 
 		for (int i = 0; i < c.landmarks_.size(); i++)
 		{

@@ -3,12 +3,12 @@ MeasurementLikelihoodThreshold:  100.0
 
 lmExistenceProb: 0.01
 
-minframe: 200
+minframe: 40
 maxframe: 6000
 staticframes: 0
 
 PE: 1e-10
-logExistenceOdds: -1800
+logExistenceOdds: -1700
 PD: 0.8
 numIterations: 2000
 numGibbs: 20
@@ -18,9 +18,9 @@ maxRange: 5
 numLevenbergIterations: 5
 tempFactor: 0.995
 initTemp: 1
-birthDeathNumIter: 1
+birthDeathNumIter: 2
 crossoverNumIter: 13300
-numPosesToOptimize: 10
+numPosesToOptimize: 30
 
 maxWeightDifference: 1e+6
 
@@ -53,7 +53,7 @@ stereoInfo:
     data: [2.0 , 0.0 , 0.0 ,
     0.0 , 2.00 , 0.0 ,
     0.0 , 0.0 , 2.00 ]
-logKappa: -2040 #-(540+60*60)
+logKappa: -1740 #-(540+60*60)
 
 viewingCosLimit: 0.5
 use_gui: true
