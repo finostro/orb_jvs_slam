@@ -60,6 +60,7 @@ namespace rfs
         int numFoV_;
         int id;
         double birthTime_;
+        double maxDetectionTime;
         // creation
         int  birthMatch;
         OrbslamPose *birthPose;

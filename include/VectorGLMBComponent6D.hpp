@@ -96,6 +96,7 @@ struct VectorGLMBComponent6D {
 	std::vector<std::vector<AssociationProbabilities> > reverseDAProbs_; /**< same as before but from landmarks to measurements*/ 
 
 	std::vector<OrbslamPose> poses_;
+	std::vector<OrbslamPose*> keyposes_;
 	std::vector<OdometryEdge *> odometries_;
 	
 	std::vector<OrbslamMapPoint> landmarks_;

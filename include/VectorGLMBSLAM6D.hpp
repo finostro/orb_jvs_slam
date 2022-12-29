@@ -2010,9 +2010,10 @@ void print_map(const MapType & m)
 			// for (int k=0; k< minpose_;k++){
 			// 	if(k%5!=0){
 			// 		 for(int nz=0; nz < c.poses_[k].Z_.size();nz++){
-			// 		 	//c.poses_[k].Z_[nz]->setLevel(2);
-			// 			c.optimizer_->removeEdge(c.poses_[k].Z_[nz]);
+			// 		 	c.poses_[k].Z_[nz]->setLevel(2);
+			// 			// c.optimizer_->removeEdge(c.poses_[k].Z_[nz]);
 			// 		 }
+			// 		//c.optimizer_->removeVertex(c.poses_[k].pPose);
 			// 		//c.poses_[k].pPose->setMarginalized(true);
 			// 	}
 			// }
@@ -2732,7 +2733,7 @@ void print_map(const MapType & m)
 				if (graph_da>=0){
 					
 					assert (c.optimizer_->vertices().find(c.poses_[k].Z_[nz]->vertex(0)->id() ) != c.optimizer_->vertices().end() );
-					assert (c.optimizer_->vertices().find(c.poses_[k].Z_[nz]->vertex(0)->id()) != c.optimizer_->vertices().end() );
+					assert (c.optimizer_->vertices().find(c.poses_[k].Z_[nz]->vertex(1)->id()) != c.optimizer_->vertices().end() );
 					assert (c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
 				}else{
 
@@ -3505,8 +3506,11 @@ void print_map(const MapType & m)
 					auto it = c.DA_bimap_[k].right.find(c.landmarks_[lm].id);
 					bool associated = it != c.DA_bimap_[k].right.end();
 					bool isInFov = false;
+					if(c.landmarks_[lm].birthTime_ > c.poses_[maxpose_-1].stamp){
+						break;
+					}
 
-					if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp))
+					if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp && c.landmarks_[lm].birthTime_ >= c.poses_[minpose_].stamp))
 					//if ( (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp))
 					{
 						double predScale=0;
@@ -3551,6 +3555,14 @@ void print_map(const MapType & m)
 			c.reverseDAProbs_[k].resize(c.poses_[k].fov_.size());
 			c.DAProbs_[k].resize(c.poses_[k].Z_.size());
 
+			for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
+			{
+				c.DAProbs_[k][nz].i.clear();
+				c.DAProbs_[k][nz].l.clear();
+				c.DAProbs_[k][nz].i.reserve(c.poses_[k].fov_.size()+1);
+				c.DAProbs_[k][nz].i.push_back(-5);
+				c.DAProbs_[k][nz].l.push_back(config.logKappa_);
+			}
 			// double posHLogDet;
 			// if (!c.poses_[k].pPose->fixed())
 			// {
@@ -3559,16 +3571,12 @@ void print_map(const MapType & m)
 			// PoseType::HessianBlockType poseHessian(
 			// 	c.poses_[k].pPose->hessianData());
 
-			for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
-			{
 
 				// setting the topology of DAProbs to include all measurements in current FoV
 				
 				//c.DAProbs_[k][nz].i = c.poses_[k].fov_;
 				//prechecking daprobs with descriptor distance
-				c.DAProbs_[k][nz].i.clear();
-				c.DAProbs_[k][nz].l.clear();
-				c.DAProbs_[k][nz].i.reserve(c.poses_[k].fov_.size()+1);
+
 				// for(auto lmidx:c.poses_[k].fov_){
 				// 	auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
 				// 	// int dist = descriptorDistance(c.poses_[k].descriptors_left.row(c.poses_[k].matches_left_to_right[nz].queryIdx),
@@ -3583,19 +3591,7 @@ void print_map(const MapType & m)
 				// c.DAProbs_[k][nz].i.push_back(-5); // add posibility of false alarm
 				// c.DAProbs_[k][nz].l.resize(c.DAProbs_[k][nz].i.size());
 
-				auto it = c.DA_bimap_[k].left.find(nz);
-				int selectedDA = -5;
-				if (it != c.DA_bimap_[k].left.end())
-				{
-					selectedDA = it->second;
-				}
-				if (selectedDA < 0){
-					assert(c.poses_[k].Z_[nz]->vertex(0) == NULL);
-					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) == c.optimizer_->edges().end() );
-				}else{
-					assert(c.poses_[k].Z_[nz]->vertex(0)->id() == selectedDA);
-					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
-				}
+				
 				// Eigen::Matrix<double, PoseType::HessianBlockType::RowsAtCompileTime,
 				// 			  PoseType::HessianBlockType::ColsAtCompileTime>
 				// 	poseHessianCopy;
@@ -3611,23 +3607,50 @@ void print_map(const MapType & m)
 				// 		c.poses_[k].Z_[nz]->jacobianOplusXj();
 				// 	poseHessianCopy -= Jpose.transpose() * c.poses_[k].Z_[nz]->information() * Jpose;
 				// }
-				c.DAProbs_[k][nz].i.push_back(-5);
-				c.DAProbs_[k][nz].l.push_back(config.logKappa_);
 
-				double avg_desc_likelihood = 0;
+				// double avg_desc_likelihood = 0;
 
 				for(int lmFovIdx =0; lmFovIdx <c.poses_[k].fov_.size();lmFovIdx++){
 					int lmidx = c.poses_[k].fov_[lmFovIdx];
-					double p=0.0;
-					StereoMeasurementEdge  &z = *c.poses_[k].Z_[nz];
+					auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
 
-						auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
+					Eigen::Vector3d predictedZ = c.poses_[0].Z_[0]->cam_project(c.poses_[k].pPose->estimate().map(lm.pPoint->estimate()), c.poses_[0].Z_[0]->bf);;
+					
+
+					for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
+					{
+						StereoMeasurementEdge  &z = *c.poses_[k].Z_[nz];
+						double p=0.0;
+
+						// auto it = c.DA_bimap_[k].left.find(nz);
+						// int selectedDA = -5;
+						// if (it != c.DA_bimap_[k].left.end())
+						// {
+						// 	selectedDA = it->second;
+						// }
+						// if (selectedDA < 0){
+						// 	assert(c.poses_[k].Z_[nz]->vertex(0) == NULL);
+						// 	assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) == c.optimizer_->edges().end() );
+						// }else{
+						// 	assert(c.poses_[k].Z_[nz]->vertex(0)->id() == selectedDA);
+						// 	assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
+						// }
+
+
+
 						int predictedScale = c.poses_[k].predicted_scales[lmFovIdx];
 						int scalediff = abs(predictedScale-c.poses_[k].keypoints_left[c.poses_[k].matches_left_to_right[nz].queryIdx].octave );
 						if(scalediff >2){
 							continue;
 						}
 						p += 20-20.0*scalediff;
+
+						double error_scalar = (z.measurement()-predictedZ).norm();
+
+						if (error_scalar > 50){
+							continue;
+						}
+
 						//int dist = ORBDescriptor::distance(lm.descriptor, c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
 						double desclikelihood = lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx] , c.poses_[k].descriptors_right[c.poses_[k].matches_left_to_right[nz].trainIdx]);
 						if (!std::isfinite(desclikelihood) ){
@@ -3636,20 +3659,12 @@ void print_map(const MapType & m)
 						p += desclikelihood;
 
 						p += std::log(config.PD_) - std::log(1 - config.PD_);
-						c.poses_[k].Z_[nz]->setVertex(0, lm.pPoint);
+						// c.poses_[k].Z_[nz]->setVertex(0, lm.pPoint);
 
 						//c.poses_[k].Z_[nz]->g2o::BaseBinaryEdge<3, g2o::Vector3, PointType, PoseType>::linearizeOplus(jac_ws);
-						c.poses_[k].Z_[nz]->computeError();
+						//c.poses_[k].Z_[nz]->computeError();
 						
 
-						Eigen::Matrix<double, StereoMeasurementEdge::Dimension, 1,
-									  Eigen::ColMajor>
-							omega_r =
-								-c.poses_[k].Z_[nz]->error();
-
-						if (omega_r.norm() > 50){
-							continue;
-						}
 
 						// if pose is not fixed, calc updated pose and lm
 						// if (false && !c.poses_[k].pPose->fixed())
@@ -3813,7 +3828,7 @@ void print_map(const MapType & m)
 
 							// p += -0.5 * (c.poses_[k].Z_[nz]->chi2() - sol.dot(b));
 							
-							 p += -0.5 * (c.poses_[k].Z_[nz]->chi2());
+							 p += -0.5 * (error_scalar*error_scalar*z.information()(0,0)); //chi2, this assumes information is a*Identity(3,3)
 							assert(!isnan(p));
 							p += -0.5 * c.poses_[k].Z_[nz]->dimension() * std::log(2 * M_PI);
 							assert(!isnan(p));
@@ -3837,7 +3852,7 @@ void print_map(const MapType & m)
 						c.reverseDAProbs_[k][lmFovIdx].i.push_back(nz);
 						c.reverseDAProbs_[k][lmFovIdx].l.push_back(p);
 
-						avg_desc_likelihood += desclikelihood;
+						// avg_desc_likelihood += desclikelihood;
 					}
 				}
 				// avg_desc_likelihood /= c.DAProbs_[k][nz].l.size()-1;
@@ -3849,23 +3864,23 @@ void print_map(const MapType & m)
 
 
 
-				if (selectedDA >= 0)
-				{
-					c.poses_[k].Z_[nz]->setVertex(0,
-												  dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.optimizer_->vertices().find(
-																															selectedDA)
-																									->second));
-					//c.poses_[k].Z_[nz]->linearizeOplus();
-					c.poses_[k].Z_[nz]->computeError();
-					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
-				}
-				else
-				{
+				// if (selectedDA >= 0)
+				// {
+				// 	c.poses_[k].Z_[nz]->setVertex(0,
+				// 								  dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.optimizer_->vertices().find(
+				// 																											selectedDA)
+				// 																					->second));
+				// 	//c.poses_[k].Z_[nz]->linearizeOplus();
+				// 	c.poses_[k].Z_[nz]->computeError();
+				// 	assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
+				// }
+				// else
+				// {
 
-					c.poses_[k].Z_[nz]->setVertex(0, NULL);
-					assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) == c.optimizer_->edges().end() );
+				// 	c.poses_[k].Z_[nz]->setVertex(0, NULL);
+				// 	assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) == c.optimizer_->edges().end() );
 					
-				}
+				// }
 			}
 		}
 	}

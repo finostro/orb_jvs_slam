@@ -62,6 +62,9 @@ namespace rfs
 
         //timestamp
         double stamp;
+        // iskeypose
+
+        bool isKeypose;
         // image bounds
 
         double mnMinX;
