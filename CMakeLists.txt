@@ -93,7 +93,7 @@ ENDIF()
 
 
 
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}   -D_GLIBCXX_ASSERTIONS")
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}   -D_GLIBCXX_ASSERTIONS")
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}   -DLLVM_ENABLE_EXPENSIVE_CHECKS=ON")
 # sanitizer
 
@@ -124,8 +124,8 @@ else()
     SET(USE_SANITIZER "disabled" CACHE STRING "set sanitizer type.")
 endif()
     
-message("enabling cpu profiler ${USE_CPU_PROFILER}")
-ADD_DEFINITIONS(-D_PERFTOOLS_CPU)
+# message("enabling cpu profiler ${USE_CPU_PROFILER}")
+# ADD_DEFINITIONS(-D_PERFTOOLS_CPU)
     # Google perftools
 FIND_PACKAGE(Perftools)
 IF(Perftools_FOUND)

@@ -2024,6 +2024,7 @@ void print_map(const MapType & m)
 				//c.poses_[k].pPose->setFixed(true);
 				c.odometries_[k-1]->setLevel(2);
 			}
+
 			int threadnum = 0;
 			#ifdef _OPENMP
 			threadnum = omp_get_thread_num();
@@ -2048,11 +2049,11 @@ void print_map(const MapType & m)
 			//int niterations = opt1(c.optimizer_ , 1);
 			//assert(niterations > 0);
 			perturbTraj(c);
+			moveBirth(c);
 			//std::cout  << "optimized \n";
 			//c.optimizer_->save("01.g2o");
 			updateMetaStates(c);
 
-			moveBirth(c);
 			checkGraph(c);
 			//checkNumDet(c);
 			updateFoV(c);
@@ -2218,9 +2219,15 @@ void print_map(const MapType & m)
 			for(int k = 0; k< config.staticframes-config.minframe ; k++){
 				c.poses_[k].pPose->setFixed(true);
 			}
-			// for(int k = std::max(config.staticframes-config.minframe,0); k< minpose_ ; k++){
-			// 	c.poses_[k].pPose->setFixed(true);
-			// }
+			if ( iteration_%20==0){
+				for(int k = std::max(config.staticframes-config.minframe,0); k < minpose_ ; k++){
+					c.poses_[k].pPose->setFixed(false);
+				}
+			}else {
+				for(int k = std::max(config.staticframes-config.minframe,0); k < minpose_ ; k++){
+					c.poses_[k].pPose->setFixed(true);
+				}
+			}
 			c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
 			//c.optimizer_->computeInitialGuess();
@@ -2437,13 +2444,15 @@ void print_map(const MapType & m)
 
 						descriptor_logw += desclikelihood;
 						if (!std::isfinite(descriptor_logw)){
-							for (int kk:lm.is_in_fov_){
-								auto it = c.DA_bimap_[kk].right.find(lm.id);
-								if (it != c.DA_bimap_[kk].right.end()){
-									std::cout << "k " << kk << " nz  " <<it->second << "\n";
-								}
-							}
+							// for (int kk:lm.is_in_fov_){
+							// 	auto it = c.DA_bimap_[kk].right.find(lm.id);
+							// 	if (it != c.DA_bimap_[kk].right.end()){
+							// 		std::cout << "k " << kk << " nz  " <<it->second << "\n";
+							// 	}
+							// }
+							std::cout << "bad descriptor likelihood   \n";
 							assert(0);
+							exit(1);
 						}
 
 
@@ -2756,13 +2765,14 @@ void print_map(const MapType & m)
 		for (int i = 0; i < c.landmarks_.size(); i++)
 		{
 			auto &lm=c.landmarks_[i];
-			if (lm.numDetections_ > 0 || lm.numFoV_ == 0 || lm.birthTime_>c.poses_[maxpose_-1].stamp || lm.birthTime_<c.poses_[minpose_].stamp)
+			double numdet = c.landmarksInitProb_[i];
+
+			if (numdet <2 || lm.numDetections_ > 0 || lm.numFoV_ == 0 || lm.birthTime_>c.poses_[maxpose_-1].stamp || lm.birthTime_<c.poses_[minpose_].stamp)
 			{
 				continue;
 			}
 			//
 			//c.landmarksInitProb_[i] = c.landmarksInitProb_[i] / (c.landmarks_[i].numFoV_ * config.PD_);
-			double numdet = c.landmarksInitProb_[i];
 			//c.landmarksInitProb_[i] =-(numdet)*config.logKappa_ +c.landmarksInitProb_[i]+ config.logExistenceOdds;
 			
 			double aux= exp(c.landmarksInitProb_[i] );
@@ -3368,7 +3378,7 @@ void print_map(const MapType & m)
 								auto birth_it2 = c.DA_bimap_[kbirth].right.find(probs.i[sample]); 
 								if (birth_it2 == c.DA_bimap_[kbirth].right.end()){
 									if(lm.numDetections_== lm.numFoV_){
-										std::cout << termcolor::red << "adding imposssible det_:\n" << termcolor::reset;
+										std::cout << termcolor::red << " sampling: adding imposssible det_:\n" << termcolor::reset;
 										printDA(c);
 										assert(0);
 									}
@@ -3407,8 +3417,9 @@ void print_map(const MapType & m)
 					double avg_depth=0;
 					double max_depth=0;
 					double min_depth= std::numeric_limits<double>::infinity();
+					int max_dist_bef = 0 ;
 
-					// std::vector<ORBDescriptor*> descriptors;
+					std::vector<ORBDescriptor*> descriptors;
 					// std::vector<int> distances_bef, distances_after;
 
 
@@ -3426,8 +3437,16 @@ void print_map(const MapType & m)
 						auto &desc_right = c.poses_[posenum].descriptors_right[nr];
 						// distances_bef.push_back(ORBDescriptor::distance(map_point.descriptor , desc_left));
 						// distances_bef.push_back(ORBDescriptor::distance(map_point.descriptor , desc_right));
-						// descriptors.push_back(&c.poses_[posenum].descriptors_left[nl]);
-						// descriptors.push_back(&c.poses_[posenum].descriptors_right[nr]);
+						int d =ORBDescriptor::distance(map_point.descriptor , desc_left) + ORBDescriptor::distance(map_point.descriptor , desc_right);
+
+						if (max_dist_bef < d){
+							max_dist_bef = d;
+						}
+						// assert(d <=200);
+
+
+						descriptors.push_back(&c.poses_[posenum].descriptors_left[nl]);
+						descriptors.push_back(&c.poses_[posenum].descriptors_right[nr]);
 						for(int i=0;i<256;i++){
 							if (desc_left.desc[i])
 								avg_desc[i]++;
@@ -3457,22 +3476,43 @@ void print_map(const MapType & m)
 					assert(max_depth < map_point.mfMaxDistance);
 					assert(min_depth > map_point.mfMinDistance);
 
-					for(int i=0;i<256;i++){
-						map_point.descriptor.desc[i] = avg_desc[i]>map_point.numDetections_;
-					}
-					// int ii=0;
-					// for (auto desc:descriptors){
-					// 	distances_after.push_back(ORBDescriptor::distance(map_point.descriptor , *desc));
-					// 	ii++;
-					// 	if(ii%2 ==0 ){
-					// 		assert(distances_after[ii-1]+distances_after[ii-2] <=200);
-					// 	}
+					ORBDescriptor newDesc ;
+
+					
 						
-					// }
+					for(int i=0;i<256;i++){
+						newDesc.desc[i] = avg_desc[i]>map_point.numDetections_;
+					}
+					
+					int ii=0;
+					int max_dist = 0;
+					for (int ndesc=1; ndesc < descriptors.size() ; ndesc+=2){
+						int d = ORBDescriptor::distance(newDesc , *descriptors[ndesc])+ORBDescriptor::distance(newDesc , *descriptors[ndesc-1]);
+						if (d>max_dist){
+							max_dist = d;
+						}
+						// distances_after.push_back(ORBDescriptor::distance(map_point.descriptor , *desc));
+						// ii++;
+						// if(ii%2 ==0 ){
+						// 	assert(distances_after[ii-1]+distances_after[ii-2] <=200);
+						// }
+						
+					}
+					if (max_dist_bef>200 && max_dist >200){
+						std::cout << termcolor::red <<  " dist is impossible\n"  << termcolor::reset; 
+						assert(0);
+					}
+
+					if (max_dist <=200){
+						map_point.descriptor = newDesc;
+					}
 					map_point.normalVector.normalize();
 
+
+
 				}else{
-					map_point.normalVector = map_point.birthPose->point_camera_frame[map_point.birthMatch].normalized();
+					map_point.normalVector =  (map_point.pPoint->estimate()-map_point.birthPose->invPose.translation()).normalized();
+					
 					map_point.descriptor = map_point.birthPose->descriptors_left[map_point.birthPose->matches_left_to_right[map_point.birthMatch].queryIdx];
 
 				}
