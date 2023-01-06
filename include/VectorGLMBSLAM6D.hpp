@@ -841,6 +841,56 @@ void print_map(const MapType & m)
 
 		association_pub.publish(as_marker);
 		ros::spinOnce();
+
+// show last image
+
+			cv::Mat imLeft, imRight;
+			cv::Mat imLeft_rect, imRight_rect;
+			// Read left and right images from file
+			imLeft = cv::imread(vstrImageLeft[c.maxpose_-1], cv::IMREAD_UNCHANGED);	//,cv::IMREAD_UNCHANGED);
+			imRight = cv::imread(vstrImageRight[c.maxpose_-1], cv::IMREAD_UNCHANGED); //,cv::IMREAD_UNCHANGED);
+
+			if (imLeft.empty())
+			{
+				std::cerr << std::endl
+						  << "Failed to load image at: "
+						  << std::string(vstrImageLeft[c.maxpose_-1]) << std::endl;
+				exit(1);
+			}
+
+			if (imRight.empty())
+			{
+				std::cerr << std::endl
+						  << "Failed to load image at: "
+						  << std::string(vstrImageRight[c.maxpose_-1]) << std::endl;
+				exit(1);
+			}
+
+			cv::remap(imLeft, imLeft_rect, config.camera_parameters_[0].M1,
+					  config.camera_parameters_[0].M2, cv::INTER_LINEAR);
+			cv::remap(imRight, imRight_rect, config.camera_parameters_[1].M1,
+					  config.camera_parameters_[1].M2, cv::INTER_LINEAR);
+			// plot stereo matches
+			cv::Mat imLeftKeys, imRightKeys, imMatches;
+			cv::Scalar kpColor = cv::Scalar(255, 0, 0);
+
+			cv::drawMatches(imLeft_rect,
+							initial_component_.poses_[c.maxpose_-1].keypoints_left, imRight_rect,
+							initial_component_.poses_[c.maxpose_-1].keypoints_right,
+							initial_component_.poses_[c.maxpose_-1].matches_left_to_right, imMatches);
+
+			// cv::drawKeypoints(imRight_rect,
+			// 				  initial_component_.poses_[ni].keypoints_right, imRightKeys,
+			// 				  kpColor);
+			// cv::drawKeypoints(imLeft_rect,
+			// 				  initial_component_.poses_[ni].keypoints_left, imLeftKeys,
+			// 				  kpColor);
+			  cv::imshow("matches", imMatches);
+			 //cv::imshow("imLeft", imLeft);
+			 //cv::imshow("imLeft_rect", imLeft_rect);
+
+			 cv::waitKey(1); // Wait for a keystroke in the window
+
 	}
 
 	void VectorGLMBSLAM6D::changeDA(VectorGLMBComponent6D &c,
@@ -924,6 +974,7 @@ void print_map(const MapType & m)
 			changeDA(components_[i], it->first);
 			for(int numpose = 0 ; numpose < components_[i].poses_.size() ; numpose++){
 				components_[i].poses_[numpose].pPose->setEstimate(it->second.trajectory[numpose].pose);	
+				components_[i].poses_[numpose].invPose = components_[i].poses_[numpose].pPose->estimate().inverse();	
 				if (numpose>0){
 					double dist = (it->second.trajectory[numpose].pose.translation()-it->second.trajectory[numpose-1].pose.translation()).norm();
 					//assert (dist<0.1);
@@ -1076,10 +1127,10 @@ void print_map(const MapType & m)
 			cv::Mat imLeftKeys, imRightKeys, imMatches;
 			cv::Scalar kpColor = cv::Scalar(255, 0, 0);
 
-			// cv::drawMatches(imLeft_rect,
-			// 				initial_component_.poses_[ni].keypoints_left, imRight_rect,
-			// 				initial_component_.poses_[ni].keypoints_right,
-			// 				initial_component_.poses_[ni].matches_left_to_right, imMatches);
+			cv::drawMatches(imLeft_rect,
+							initial_component_.poses_[ni].keypoints_left, imRight_rect,
+							initial_component_.poses_[ni].keypoints_right,
+							initial_component_.poses_[ni].matches_left_to_right, imMatches);
 
 			// cv::drawKeypoints(imRight_rect,
 			// 				  initial_component_.poses_[ni].keypoints_right, imRightKeys,
@@ -1087,7 +1138,7 @@ void print_map(const MapType & m)
 			// cv::drawKeypoints(imLeft_rect,
 			// 				  initial_component_.poses_[ni].keypoints_left, imLeftKeys,
 			// 				  kpColor);
-			//  cv::imshow("matches", imMatches);
+			  cv::imshow("matches", imMatches);
 			 //cv::imshow("imLeft", imLeft);
 			 //cv::imshow("imLeft_rect", imLeft_rect);
 
@@ -1644,6 +1695,8 @@ void print_map(const MapType & m)
 		
 
 		for(int k = startk ; k < c.poses_.size() ; k++){
+			int numdet = c.DA_bimap_[k].size();
+			if (numdet > 4) continue;
 			//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
 			double d = uni_dist(randomGenerators_[threadnum]);
 			g2o::Vector6 p_v;
@@ -2048,7 +2101,44 @@ void print_map(const MapType & m)
 
 			//int niterations = opt1(c.optimizer_ , 1);
 			//assert(niterations > 0);
+
+			bool inserted;
+			std::map<
+			std::vector<boost::bimap<int, int, boost::container::allocator<int>>>,
+			TrajectoryWeight>::iterator it;
+
+			if (iteration_ % 20 ==0){
+				int niterations = opt1(c.optimizer_ , 20);
+				updatePoses(c);
+				moveBirth(c);
+				updateMetaStates(c);
+				updateFoV(c);
+				calculateWeight(c);
+				#pragma omp critical(bestweight)
+				{
+					it = visited_.find(c.DA_bimap_);
+					if (it != visited_.end()){
+						if (it->second.weight< c.logweight_){
+							it->second.weight = c.logweight_;
+							if (c.logweight_ > bestWeight_){
+								bestWeight_ = c.logweight_;
+							}
+							
+							for(int numpose =0; numpose< maxpose_; numpose++){
+								it->second.trajectory[numpose].pose=c.poses_[numpose].pPose->estimate();
+							}
+							for(int numpose = maxpose_; numpose< c.poses_.size(); numpose++){
+								it->second.trajectory[numpose].pose=c.poses_[maxpose_-1].pPose->estimate();
+								c.poses_[numpose].pPose->setEstimate(c.poses_[maxpose_-1].pPose->estimate());
+							}
+
+						}
+					}
+				}
+
+			}
 			perturbTraj(c);
+			updatePoses(c);
 			moveBirth(c);
 			//std::cout  << "optimized \n";
 			//c.optimizer_->save("01.g2o");
@@ -2074,10 +2164,7 @@ void print_map(const MapType & m)
 				c.prevDA_bimap_[p] = c.DA_bimap_[p];
 			}
 			double expectedChange = 0;
-			bool inserted;
-			std::map<
-			std::vector<boost::bimap<int, int, boost::container::allocator<int>>>,
-			TrajectoryWeight>::iterator it;
+
 
 			{
 				// do{
@@ -2109,7 +2196,7 @@ void print_map(const MapType & m)
 						break;
 
 					case 2:
-						 expectedChange += mergeLM(c);
+						 //expectedChange += mergeLM(c);
 						break;
 					}
 
@@ -2125,9 +2212,9 @@ void print_map(const MapType & m)
 					c.optimizer_->initializeOptimization();
 					int niterations = opt2(c.optimizer_ , 1);
 					updatePoses(c);
+					moveBirth(c);
 					updateMetaStates(c);
 
-					moveBirth(c);
 					checkGraph(c);
 					updateFoV(c);
 					checkGraph(c);	
@@ -2237,6 +2324,7 @@ void print_map(const MapType & m)
 			}
 			int niterations = opt3(c.optimizer_ , ni);
 			updatePoses(c);
+			moveBirth(c);
 			updateMetaStates(c);
 			updateFoV(c);
 			//assert(niterations > 0);
@@ -2767,14 +2855,14 @@ void print_map(const MapType & m)
 			auto &lm=c.landmarks_[i];
 			double numdet = c.landmarksInitProb_[i];
 
-			if (numdet <2 || lm.numDetections_ > 0 || lm.numFoV_ == 0 || lm.birthTime_>c.poses_[maxpose_-1].stamp || lm.birthTime_<c.poses_[minpose_].stamp)
+			if ( lm.numDetections_ > 0 || lm.numFoV_ == 0 || lm.birthTime_>c.poses_[maxpose_-1].stamp || lm.birthTime_<c.poses_[minpose_].stamp)
 			{
 				continue;
 			}
 			//
 			//c.landmarksInitProb_[i] = c.landmarksInitProb_[i] / (c.landmarks_[i].numFoV_ * config.PD_);
 			//c.landmarksInitProb_[i] =-(numdet)*config.logKappa_ +c.landmarksInitProb_[i]+ config.logExistenceOdds;
-			
+			c.landmarksInitProb_[i] += std::log(1 - config.PD_) *lm.numFoV_; 
 			double aux= exp(c.landmarksInitProb_[i] );
 			double p = aux/(1+aux);
 			if (p > uni_dist(randomGenerators_[threadnum]))
@@ -3017,12 +3105,12 @@ void print_map(const MapType & m)
 		//AssociationProbabilities probs;
 		double expectedWeightChange = 0;
 		for (unsigned int k = minpose_; k < maxpose_; k++){
-			break;
-			std::cout  << "testk " << k  << " maxpose " << maxpose_ << "\n";
-			if(k>=maxpose_){
-				break;
-			}
-			std::cout  << "testk " << k << "\n";
+			// break;
+			// std::cout  << "testk " << k  << " maxpose " << maxpose_ << "\n";
+			// if(k>=maxpose_){
+			// 	break;
+			// }
+			// std::cout  << "testk " << k << "\n";
 			for(int lmFovIdx =0; lmFovIdx <c.poses_.at(k).fov_.size();lmFovIdx++){
 				int lmidx = c.poses_.at(k).fov_.at(lmFovIdx);
 
@@ -3048,6 +3136,13 @@ void print_map(const MapType & m)
 						}else{
 							continue;
 						}
+						int kbirth = lm.birthPose->pPose->id();
+						auto it = c.DA_bimap_[kbirth].left.find(lm.birthMatch);
+						if (it != c.DA_bimap_[kbirth].left.end()){
+							continue;
+							// initial measurement is associated skip
+						}
+						
 					}
 
 
@@ -3058,12 +3153,12 @@ void print_map(const MapType & m)
 					{
 						prevDA = it->second;
 					}
-
-					if(lm.numDetections_>0){
-						if(&c.poses_[k] == lm.birthPose){
+					
+					if(&c.poses_[k] == lm.birthPose){
+						if(lm.numDetections_>0){
 							assert(prevDA == lm.birthMatch);
-							continue;
 						}
+						continue;
 					}
 
 
@@ -3149,6 +3244,7 @@ void print_map(const MapType & m)
 							auto birth_it = c.DA_bimap_[kbirth].left.find(lm.birthMatch);
 							if (birth_it == c.DA_bimap_[kbirth].left.end()){
 								auto birth_it2 = c.DA_bimap_[kbirth].right.find(lmidx); 
+
 								if (birth_it2 == c.DA_bimap_[kbirth].right.end()){
 									if(lm.numDetections_== lm.numFoV_){
 										std::cout << termcolor::red << "adding imposssible det_:\n" << termcolor::reset;
@@ -3158,8 +3254,13 @@ void print_map(const MapType & m)
 									auto result = c.DA_bimap_[kbirth].insert({lm.birthMatch, lmidx });
 									assert(result.second);
 									lm.numDetections_++;
+								}else{
+									assert(0);
 								}
+							}else{
+								assert(birth_it->second == lm.id);
 							}
+
 						}
 					}
 					else
@@ -3241,55 +3342,61 @@ void print_map(const MapType & m)
 							maxprobi = a;
 						}
 					}
-					else if (c.DAProbs_[k][nz].i[a] == selectedDA)
-					{
-						probs.i.push_back(c.DAProbs_[k][nz].i[a]);
-						if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numDetections_ == 1)
+					else{
+						auto &lm  = c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()] ;
+						if (c.DAProbs_[k][nz].i[a] == selectedDA)
 						{
-							likelihood += config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
-							// std::cout <<" single detection: increase:  " << config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_) <<"\n";
-							probs.l.push_back(likelihood);
+							probs.i.push_back(c.DAProbs_[k][nz].i[a]);
+							if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numDetections_ == 1)
+							{
+								likelihood += config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
+								// std::cout <<" single detection: increase:  " << config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_) <<"\n";
+								probs.l.push_back(likelihood);
+							}
+							else
+							{
+								probs.l.push_back(c.DAProbs_[k][nz].l[a]);
+							}
+							if (likelihood > maxprob)
+							{
+								maxprob = likelihood;
+								maxprobi = a;
+							}
 						}
 						else
 						{
-							probs.l.push_back(c.DAProbs_[k][nz].l[a]);
-						}
-						if (likelihood > maxprob)
-						{
-							maxprob = likelihood;
-							maxprobi = a;
-						}
-					}
-					else
-					{
-						if (c.DA_bimap_[k].right.count(c.DAProbs_[k][nz].i[a]) == 0)
-						{ // landmark is not already associated to another measurement
-							
-							if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numDetections_ == 0)
-							{
+							if (c.DA_bimap_[k].right.count(c.DAProbs_[k][nz].i[a]) == 0)
+							{ // landmark is not already associated to another measurement
 								
-								if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].birthTime_ < c.poses_[k].stamp
-								&& c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].birthTime_ > c.poses_[k].stamp-1.0){
-									likelihood +=
-										config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
-									// std::cout <<" 0 detection: increase:  " << config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_)<<"\n";
+								if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numDetections_ == 0)
+								{
+									int kbirth  = lm.birthPose->pPose->id();
+									auto birth_it = c.DA_bimap_[kbirth].left.find(lm.birthMatch);
+									if (birth_it == c.DA_bimap_[kbirth].left.end() ){ // if lm spawn measurement is associated then not sample
+										if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].birthTime_ < c.poses_[k].stamp
+										&& c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].birthTime_ > c.poses_[k].stamp-1.0){
+											likelihood +=
+												config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].pPoint->id()].numFoV_) * std::log(1 - config.PD_);
+											// std::cout <<" 0 detection: increase:  " << config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].pPoint->id()].numFoV_)*std::log(1-config.PD_)<<"\n";
+											probs.i.push_back(c.DAProbs_[k][nz].i[a]);
+											probs.l.push_back(likelihood);
+											if (likelihood > maxprob)
+											{
+												maxprob = likelihood;
+												maxprobi = a;
+											}
+										}
+									}
+								}
+								else
+								{
 									probs.i.push_back(c.DAProbs_[k][nz].i[a]);
-									probs.l.push_back(likelihood);
+									probs.l.push_back(c.DAProbs_[k][nz].l[a]);
 									if (likelihood > maxprob)
 									{
 										maxprob = likelihood;
 										maxprobi = a;
 									}
-								}
-							}
-							else
-							{
-								probs.i.push_back(c.DAProbs_[k][nz].i[a]);
-								probs.l.push_back(c.DAProbs_[k][nz].l[a]);
-								if (likelihood > maxprob)
-								{
-									maxprob = likelihood;
-									maxprobi = a;
 								}
 							}
 						}
@@ -3351,7 +3458,8 @@ void print_map(const MapType & m)
 
 					if (probs.i[sample] >= 0)
 					{
-						c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].numDetections_++;
+						auto &lm = c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()];
+						lm.numDetections_++;
 						if (selectedDA < 0)
 						{
 							auto result = c.DA_bimap_[k].insert({nz, probs.i[sample]});
@@ -3359,9 +3467,10 @@ void print_map(const MapType & m)
 						}
 						else
 						{
+							auto &prev_lm = c.landmarks_[selectedDA - c.landmarks_[0].pPoint->id()];
 
-							c.landmarks_[selectedDA - c.landmarks_[0].pPoint->id()].numDetections_--;
-							assert(c.landmarks_[selectedDA - c.landmarks_[0].pPoint->id()].numDetections_ >= 0);
+							prev_lm.numDetections_--;
+							assert(prev_lm.numDetections_ >= 0);
 							auto result = c.DA_bimap_[k].left.replace_data(it, probs.i[sample]);
 							assert(result);
 
@@ -3369,11 +3478,10 @@ void print_map(const MapType & m)
 							c.tomerge_.push_back(
 								std::make_pair(probs.i[sample], selectedDA));
 						}
-						if (c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].numDetections_>0 ){
-							int kbirth = c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthPose->pPose->id();
-							auto &lm = c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()];
+						if (lm.numDetections_>0 ){
+							int kbirth = lm.birthPose->pPose->id();
 							
-							auto birth_it = c.DA_bimap_[kbirth].left.find(c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch);
+							auto birth_it = c.DA_bimap_[kbirth].left.find(lm.birthMatch);
 							if (birth_it == c.DA_bimap_[kbirth].left.end()){
 								auto birth_it2 = c.DA_bimap_[kbirth].right.find(probs.i[sample]); 
 								if (birth_it2 == c.DA_bimap_[kbirth].right.end()){
@@ -3385,7 +3493,11 @@ void print_map(const MapType & m)
 									auto result = c.DA_bimap_[kbirth].insert({c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].birthMatch, probs.i[sample] });
 									assert(result.second);
 									c.landmarks_[probs.i[sample] - c.landmarks_[0].pPoint->id()].numDetections_++;
+								}else{
+									assert(birth_it2->second  == lm.birthMatch);
 								}
+							}else{
+								assert(birth_it->second == lm.id);
 							}
 						}
 					}
@@ -3420,7 +3532,7 @@ void print_map(const MapType & m)
 					int max_dist_bef = 0 ;
 
 					std::vector<ORBDescriptor*> descriptors;
-					// std::vector<int> distances_bef, distances_after;
+					std::vector<int> distances_bef, distances_after;
 
 
 					for (auto &edge: map_point.pPoint->edges()){
@@ -3435,8 +3547,8 @@ void print_map(const MapType & m)
 						int nr = c.poses_[posenum].matches_left_to_right[nz].trainIdx;
 						auto &desc_left = c.poses_[posenum].descriptors_left[nl];
 						auto &desc_right = c.poses_[posenum].descriptors_right[nr];
-						// distances_bef.push_back(ORBDescriptor::distance(map_point.descriptor , desc_left));
-						// distances_bef.push_back(ORBDescriptor::distance(map_point.descriptor , desc_right));
+						distances_bef.push_back(ORBDescriptor::distance(map_point.descriptor , desc_left));
+						distances_bef.push_back(ORBDescriptor::distance(map_point.descriptor , desc_right));
 						int d =ORBDescriptor::distance(map_point.descriptor , desc_left) + ORBDescriptor::distance(map_point.descriptor , desc_right);
 
 						if (max_dist_bef < d){
@@ -3503,9 +3615,9 @@ void print_map(const MapType & m)
 						assert(0);
 					}
 
-					if (max_dist <=200){
-						map_point.descriptor = newDesc;
-					}
+					// if (max_dist <=200){
+					// 	map_point.descriptor = newDesc;
+					// }
 					map_point.normalVector.normalize();
 
 
@@ -4089,7 +4201,7 @@ void print_map(const MapType & m)
 				initStereoEdge(c.poses_[k], nz);
 				cam_unproject(*c.poses_[k].Z_[nz], c.poses_[k].point_camera_frame[nz]);
 		
-				if (k%15==0){
+				if (k%10==0){
 					if (initMapPoint(c.poses_[k], nz, lm, edgeid))
 					{
 						edgeid++;

@@ -98,7 +98,7 @@ namespace rfs{
         static  double a = std::log(1.0/8.0);
         static  double b = std::log(7.0/8.0);
         static  double c = std::log(1.0/2.0);
-        static constexpr double f = -20.0;
+        static constexpr double f = -2.0;
         double ret =d*f;
         //std::cout << d << "\n";
         return  ret;

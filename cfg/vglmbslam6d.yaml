@@ -3,19 +3,19 @@ MeasurementLikelihoodThreshold:  100.0
 
 lmExistenceProb: 0.01
 
-minframe: 000
+minframe: 0
 maxframe: 6000
 staticframes: 0
 
 PE: 1e-10
-logExistenceOdds: -2000
-PD: 0.8
-numIterations: 1000
-numGibbs: 20
+logExistenceOdds: -100
+PD: 0.7
+numIterations: 2000
+numGibbs: 40
 numLandmarks: 100
 numComponents: 16
 maxRange: 5
-numLevenbergIterations: 5
+numLevenbergIterations: 3
 tempFactor: 0.995
 initTemp: 1
 birthDeathNumIter: 1
@@ -24,8 +24,8 @@ numPosesToOptimize: 40
 
 maxWeightDifference: 1e+6
 
-perturbTrans: 0.001
-perturbRot: 0.006
+perturbTrans: 0.03
+perturbRot: 0.01
 
 
 finalStateFile: optimizedState.g2o
@@ -35,25 +35,25 @@ ylim : [-20.0 , 20.0 ]
 anchorInfo:
     rows: 3
     cols: 3
-    data: [0.10 , 0.0 , 0.0 ,
-    0.0 , 0.1 , 0.0 ,
-    0.0 , 0.0 , 0.01 ]
+    data: [2.10 , 0.0 , 0.0 ,
+    0.0 , 2.1 , 0.0 ,
+    0.0 , 0.0 , 2.01 ]
 odomInfo:
     rows: 6
     cols: 6
-    data: [1000 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 1000 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 1000 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 30000 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 0.0 , 30000 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 30000 ]
+    data: [500 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 500 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 500 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 1000 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 0.0 , 1000 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 1000 ]
 stereoInfo:
     rows: 3
     cols: 3
-    data: [2. , 0.0 , 0.0 ,
-    0.0 , 2.0 , 0.0 ,
-    0.0 , 0.0 , 2.0 ]
-logKappa: -1000 #-(540+60*60)
+    data: [.1 , 0.0 , 0.0 ,
+    0.0 , .10 , 0.0 ,
+    0.0 , 0.0 , .10 ]
+logKappa: -100 #-(540+60*60)
 
 viewingCosLimit: 0.5
 use_gui: true

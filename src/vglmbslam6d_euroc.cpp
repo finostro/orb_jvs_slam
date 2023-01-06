@@ -28,7 +28,7 @@ int main(int argc, char* argv[]){
 
   vglmb.loadConfig(cfgFileName);
   vglmb.loadEuroc();
-  vglmb.gt_traj.loadTUM("gt.tum",vglmb.config.base_link_to_cam0_se3, vglmb.startingStamp);
+  vglmb.gt_traj.loadTUM(vglmb.config.eurocFolder_ + "/mav0/state_groundtruth_estimate0/data.tum",vglmb.config.base_link_to_cam0_se3, vglmb.startingStamp);
   //vglmb.calculateWeight(vglmb.gt_graph);
   //std::cout << "GROUND TRUTH WEIGHT:             " <<vglmb.gt_graph.logweight_ << "\n";
   //std::cout << "weight: " << vglmb.gt_graph.logweight_ << "   chi2:  " <<vglmb.gt_graph.optimizer_->chi2() << "  determinant: " << vglmb.gt_graph.linearSolver_->_determinant<< "\n";
