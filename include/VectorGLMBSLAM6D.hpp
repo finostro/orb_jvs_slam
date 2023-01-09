@@ -1645,7 +1645,7 @@ void print_map(const MapType & m)
 			maxpose_prev_ = maxpose_;
 			maxpose_ = 2 + components_[0].poses_.size() * i / (numSteps * 0.95);
 
-			if (best_DA_max_detection_time_ + config.numPosesToOptimize_/2 < maxpose_)
+			if (best_DA_max_detection_time_ + 10 < maxpose_)
 			{
 				maxpose_ = best_DA_max_detection_time_ +10;// config.numPosesToOptimize_/2;
 			}
