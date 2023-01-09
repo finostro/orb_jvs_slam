@@ -8,7 +8,7 @@ maxframe: 6000
 staticframes: 0
 
 PE: 1e-10
-logExistenceOdds: -100
+logExistenceOdds: -200
 PD: 0.7
 numIterations: 2000
 numGibbs: 40
@@ -22,7 +22,7 @@ birthDeathNumIter: 1
 crossoverNumIter: 13300
 numPosesToOptimize: 40
 
-maxWeightDifference: 1e+6
+maxWeightDifference: 1e+4
 
 perturbTrans: 0.03
 perturbRot: 0.01
@@ -50,10 +50,10 @@ odomInfo:
 stereoInfo:
     rows: 3
     cols: 3
-    data: [.1 , 0.0 , 0.0 ,
-    0.0 , .10 , 0.0 ,
-    0.0 , 0.0 , .10 ]
-logKappa: -100 #-(540+60*60)
+    data: [1.1 , 0.0 , 0.0 ,
+    0.0 , 1.10 , 0.0 ,
+    0.0 , 0.0 , 1.10 ]
+logKappa: -150 #-(540+60*60)
 
 viewingCosLimit: 0.5
 use_gui: true

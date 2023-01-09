@@ -3107,9 +3107,9 @@ void print_map(const MapType & m)
 		for (unsigned int k = minpose_; k < maxpose_; k++){
 			// break;
 			// std::cout  << "testk " << k  << " maxpose " << maxpose_ << "\n";
-			// if(k>=maxpose_){
-			// 	break;
-			// }
+			if(k>=maxpose_){
+				break;
+			}
 			// std::cout  << "testk " << k << "\n";
 			for(int lmFovIdx =0; lmFovIdx <c.poses_.at(k).fov_.size();lmFovIdx++){
 				int lmidx = c.poses_.at(k).fov_.at(lmFovIdx);
@@ -4201,7 +4201,7 @@ void print_map(const MapType & m)
 				initStereoEdge(c.poses_[k], nz);
 				cam_unproject(*c.poses_[k].Z_[nz], c.poses_[k].point_camera_frame[nz]);
 		
-				if (k%10==0){
+				if (k%15==0){
 					if (initMapPoint(c.poses_[k], nz, lm, edgeid))
 					{
 						edgeid++;
