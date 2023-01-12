@@ -285,7 +285,7 @@ void print_map(const MapType & m)
 			g2o::CameraParameters *g2o_cam_params;
 			double viewingCosLimit_;
 
-			std::string eurocFolder_, eurocTimestampsFilename_;
+			std::string eurocFolder_, eurocTimestampsFilename_ , resultFolder;
 
 			bool use_gui_;
 
@@ -1409,6 +1409,7 @@ void print_map(const MapType & m)
 
 
 		config.eurocFolder_ = node["eurocFolder"].as<std::string>();
+		config.resultFolder = node["resultFolder"].as<std::string>();
 		config.use_gui_ = node["use_gui"].as<bool>();
 
 		config.eurocTimestampsFilename_ = node["eurocTimestampsFilename"].as<std::string>();
@@ -1622,7 +1623,7 @@ void print_map(const MapType & m)
 			c.optimizer_->initializeOptimization();
 			//c.optimizer_->computeInitialGuess();
 			c.optimizer_->setVerbose(false);
-			std::string filename = std::string("init") + std::to_string(i++) + ".g2o";
+			std::string filename = config.resultFolder+std::string("/init") + std::to_string(i++) + ".g2o";
 			c.optimizer_->save(filename.c_str(), 0);
 		if (!c.optimizer_->verifyInformationMatrices(true)){
 			std::cerr << "info is bad\n";
@@ -1651,6 +1652,12 @@ void print_map(const MapType & m)
 			}
 			if (maxpose_ > components_[0].poses_.size())
 				maxpose_ = components_[0].poses_.size();
+
+			if (maxpose_ > maxpose_prev_ && maxpose_>20){
+				if (visited_.size() < 20) maxpose_ = maxpose_prev_;
+			}
+
+			
 			if (best_DA_max_detection_time_ == components_[0].poses_.size() - 1)
 			{
 				minpose_ = 0;
@@ -1693,20 +1700,41 @@ void print_map(const MapType & m)
 		boost::uniform_real<> uni_dist(0, 1);
 		int startk = std::max(std::max(minpose_ , config.staticframes-config.minframe ) ,1);
 		
+		int max_detection_time = maxpose_ - 1;
+		while (max_detection_time > 0 && c.DA_bimap_[max_detection_time].size() == 0)
+		{
+			max_detection_time--;
+		}
+
+		if (max_detection_time>0){
+			auto displacement = c.poses_[max_detection_time-1].pPose->estimate()*c.poses_[max_detection_time].pPose->estimate().inverse();
+			auto current_pose = c.poses_[max_detection_time].invPose;
+
+			for(int k = max_detection_time+1 ; k < c.poses_.size() ; k++){
+				//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
+				current_pose = current_pose*displacement;
+				
+				c.poses_[k].invPose = current_pose;
+
+				c.poses_[k].pPose->setEstimate(current_pose.inverse());
+			}
+		}
 
 		for(int k = startk ; k < c.poses_.size() ; k++){
 			int numdet = c.DA_bimap_[k].size();
-			if (numdet > 4) continue;
+			if (numdet > 10) continue;
 			//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
 			double d = uni_dist(randomGenerators_[threadnum]);
 			g2o::Vector6 p_v;
 
 			p_v = c.poses_[k].pPose->estimate().inverse().toMinimalVector();
-	
 
-			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbTrans;
-			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbTrans;
-			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbTrans;
+			double dist = (c.poses_[k].pPose->estimate().inverse().translation()-c.poses_[k-1].pPose->estimate().inverse().translation()).norm();
+
+
+			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans;
+			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans;
+			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans;
 			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot;
 			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot;
 			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot;
@@ -1714,16 +1742,7 @@ void print_map(const MapType & m)
 			c.poses_[k].pPose->setEstimate(pos.inverse());
 		}
 
-		// auto displacement = c.poses_[maxpose_].pPose->estimate()*c.poses_[maxpose_-1].pPose->estimate().inverse();
-		// auto current_pose = c.poses_[maxpose_].pPose->estimate();
 
-		// for(int k = maxpose_ ; k < c.poses_.size() ; k++){
-		// 	//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
-		// 	current_pose = current_pose*displacement;
-
-
-		// 	c.poses_[k].pPose->setEstimate(current_pose);
-		// }
 
 	}
 
@@ -2334,12 +2353,18 @@ void print_map(const MapType & m)
 			TrajectoryWeight to_insert;
 			to_insert.weight = c.logweight_;
 			to_insert.trajectory.resize(c.poses_.size() );
-			for(int numpose =0; numpose< maxpose_; numpose++){
+			int max_detection_time_ = std::max(maxpose_ - 1, 0);
+			while (max_detection_time_ > 0 && c.DA_bimap_[max_detection_time_].size() == 0)
+			{
+				max_detection_time_--;
+			}
+
+			for(int numpose =0; numpose <= max_detection_time_; numpose++){
 				to_insert.trajectory[numpose].pose=c.poses_[numpose].pPose->estimate();
 			}
-			for(int numpose = maxpose_; numpose< c.poses_.size(); numpose++){
-				to_insert.trajectory[numpose].pose=c.poses_[maxpose_-1].pPose->estimate();
-				c.poses_[numpose].pPose->setEstimate(c.poses_[maxpose_-1].pPose->estimate());
+			for(int numpose = max_detection_time_+1; numpose< c.poses_.size(); numpose++){
+				to_insert.trajectory[numpose].pose=c.poses_[max_detection_time_].pPose->estimate();
+				c.poses_[numpose].pPose->setEstimate(c.poses_[max_detection_time_].pPose->estimate());
 			}
 			auto pair = std::make_pair(c.DA_bimap_, to_insert);
 
@@ -2388,7 +2413,7 @@ void print_map(const MapType & m)
 					{
 						best_DA_max_detection_time_--;
 					}
-					filename << "video/beststate_" << std::setfill('0')
+					filename << config.resultFolder << "/video/beststate_" << std::setfill('0')
 							 << std::setw(5) << iterationBest_++ << ".g2o";
 					c.optimizer_->save(filename.str().c_str(), 0);
 					std::cout << termcolor::yellow << "========== newbest:"
@@ -2407,7 +2432,7 @@ void print_map(const MapType & m)
 					//printDA(c);
 					std::stringstream name;
 					static int numbest=0;
-					name <<  "best__" << numbest++ << ".tum"; 
+					name  << config.resultFolder <<  "/best__" << numbest++ << ".tum"; 
 					//c.optimizer_->save(name.str().c_str());
 					c.saveAsTUM(name.str(),config.base_link_to_cam0_se3);
 
@@ -2416,7 +2441,7 @@ void print_map(const MapType & m)
 						std::cout << termcolor::yellow << "========== piblishingmarkers:"
 								  << bestWeight_ << " ============\n"
 								  << termcolor::reset;
-						//perturbTraj(c);
+						perturbTraj(c);
 						publishMarkers(c);
 					}
 
