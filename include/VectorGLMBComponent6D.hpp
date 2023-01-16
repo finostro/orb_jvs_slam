@@ -38,13 +38,16 @@
 
 
 #include <gtsam/geometry/Pose3.h>
+#include <gtsam/geometry/Point3.h>
 #include <gtsam/geometry/Cal3_S2Stereo.h>
+#include <gtsam/geometry/StereoCamera.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/nonlinear/NonlinearEquality.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/slam/StereoFactor.h>
 #include <gtsam/slam/BetweenFactor.h>
+#include <gtsam/nonlinear/ISAM2.h>
 
 
 #include "OrbslamMapPoint.hpp"
@@ -81,10 +84,11 @@ struct VectorGLMBComponent6D {
 
 
  	gtsam::NonlinearFactorGraph graph;
-	gtsam::LevenbergMarquardtOptimizer optimizer;
+	gtsam::Values current_estimate;
+	gtsam::ISAM2 isam;
 
 
-
+	gtsam::StereoCamera camera;
 
 
 	std::vector<boost::bimap<int, int, boost::container::allocator<int>>>
@@ -96,7 +100,7 @@ struct VectorGLMBComponent6D {
 
 	std::vector<OrbslamPose> poses_;
 	std::vector<OrbslamPose*> keyposes_;
-	std::vector<OdometryEdge *> odometries_;
+	std::vector<OdometryEdge::shared_ptr> odometries_;
 	
 	std::vector<OrbslamMapPoint> landmarks_;
 	std::vector<double> landmarksResetProb_, landmarksInitProb_;
@@ -134,7 +138,15 @@ struct VectorGLMBComponent6D {
 
 	}
 
+	VectorGLMBComponent6D(gtsam::Cal3_S2Stereo::shared_ptr stereo_calibration, gtsam::ISAM2Params isam2_params):
+	camera( PoseType(), stereo_calibration),
+	isam(isam2_params){
+		
+	}
 
+	VectorGLMBComponent6D(){
+		
+	}
 
 
 

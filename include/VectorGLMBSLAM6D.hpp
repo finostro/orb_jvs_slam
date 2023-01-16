@@ -114,6 +114,12 @@
 namespace rfs
 {
 
+
+	typedef gtsam::Point3 PointType;
+	typedef gtsam::Pose3 PoseType;
+	typedef gtsam::GenericStereoFactor<gtsam::Pose3,gtsam::Point3> StereoMeasurementEdge;
+	typedef gtsam::BetweenFactor<gtsam::Pose3> OdometryEdge;
+
 	static const int orb_th_low = 50;
 	static const int orb_th_high = 100;
 	static constexpr int thOrbDist = (orb_th_high + orb_th_low) / 2;
@@ -159,8 +165,9 @@ namespace rfs
 			file >> q.y();
 			file >> q.z();
 			file >> q.w();
-			stampedPose.pose.setTranslation(t);
-			stampedPose.pose.setRotation(q);
+			gtsam::Rot3 rot(q);
+			stampedPose.pose = PoseType(rot,t);
+
 			stampedPose.pose = stampedPose.pose*base_link_to_cam0_se3;
 			trajectory.push_back(stampedPose);
 
@@ -227,10 +234,6 @@ void print_map(const MapType & m)
 	class VectorGLMBSLAM6D
 	{
 	public:
-		typedef gtsam::Point3 PointType;
-		typedef gtsam::Pose3 PoseType;
-		typedef gtsam::GenericStereoFactor<gtsam::Pose3,gtsam::Point3> StereoMeasurementEdge;
-		typedef gtsam::BetweenFactor<gtsam::Pose3> OdometryEdge;
 
 
 		/**
@@ -274,10 +277,16 @@ void print_map(const MapType & m)
 			Eigen::Matrix3d stereoInfo_;		   /** information for stereo uvu edges */
 			Eigen::Matrix<double, 6, 6> odomInfo_; /** information for odometry edges */
 
+			gtsam::noiseModel::Diagonal::shared_ptr odom_noise; /** covariance of odometry*/
+			gtsam::noiseModel::Isotropic::shared_ptr stereo_noise; /** covariance of stereo measurements*/
+
 			std::string finalStateFile_;
 
-			g2o::CameraParameters *g2o_cam_params;
+			gtsam::Cal3_S2Stereo::shared_ptr  cam_params;
 			double viewingCosLimit_;
+
+			gtsam::ISAM2Params isam2_parameters;
+
 
 			std::string eurocFolder_, eurocTimestampsFilename_ , resultFolder;
 
@@ -377,8 +386,7 @@ void print_map(const MapType & m)
 		 */
 		void deleteComponents();
 
-		void deleteLandmarks(VectorGLMBComponent6D &c);
-		void deleteMeasurements(VectorGLMBComponent6D &c);
+
 
 		/**
 		 * run the optimization over the possible data associations.
@@ -403,12 +411,6 @@ void print_map(const MapType & m)
 		 */
 		void sampleComponents();
 
-		/**
-		 *
-		 * Update the ROS style poses, run every time after running g2o optimizer
-		 * @param c the GLMB component
-		 */
-		void updatePoses(VectorGLMBComponent6D &c);
 
 		void updateDescriptors(VectorGLMBComponent6D &c);
 		void perturbTraj(VectorGLMBComponent6D &c);
@@ -509,12 +511,12 @@ void print_map(const MapType & m)
 		 */
 		void checkDA(VectorGLMBComponent6D &c, std::ostream &s = std::cout);
 		/**
-		 * Check g2o graph is consistent
+		 * Check optimizer graph is consistent
 		 * @param c the GLMB component
 		 */
 		void checkGraph(VectorGLMBComponent6D &c, std::ostream &s = std::cout);
 		/**
-		 * Check g2o graph is consistent
+		 * Check optimizer number of edges matches number of detections
 		 * @param c the GLMB component
 		 */
 		void checkNumDet(VectorGLMBComponent6D &c, std::ostream &s = std::cout);
@@ -534,7 +536,7 @@ void print_map(const MapType & m)
 		 */
 		void calculateWeight(VectorGLMBComponent6D &c);
 		/**
-		 * Use the new sampled data association to update the g2o graph
+		 * Use the new sampled data association to update the optimizer graph
 		 * @param c the GLMB component
 		 */
 		void updateGraph(VectorGLMBComponent6D &c);
@@ -652,14 +654,15 @@ void print_map(const MapType & m)
 		transformStamped.header.frame_id = "map";
 		transformStamped.child_frame_id = "camera";
 
-		transformStamped.transform.translation.x = c.poses_[c.maxpose_-1].pPose->estimate().inverse().translation()[0];
-		transformStamped.transform.translation.y = c.poses_[c.maxpose_-1].pPose->estimate().inverse().translation()[1];
-		transformStamped.transform.translation.z = c.poses_[c.maxpose_-1].pPose->estimate().inverse().translation()[2];
+		transformStamped.transform.translation.x = c.poses_[c.maxpose_-1].pose.translation()[0];
+		transformStamped.transform.translation.y = c.poses_[c.maxpose_-1].pose.translation()[1];
+		transformStamped.transform.translation.z = c.poses_[c.maxpose_-1].pose.translation()[2];
 
-		transformStamped.transform.rotation.x = c.poses_[c.maxpose_-1].pPose->estimate().inverse().rotation().x();
-		transformStamped.transform.rotation.y = c.poses_[c.maxpose_-1].pPose->estimate().inverse().rotation().y();
-		transformStamped.transform.rotation.z = c.poses_[c.maxpose_-1].pPose->estimate().inverse().rotation().z();
-		transformStamped.transform.rotation.w = c.poses_[c.maxpose_-1].pPose->estimate().inverse().rotation().w();
+		auto q = c.poses_[c.maxpose_-1].pose.rotation().toQuaternion();
+		transformStamped.transform.rotation.x = q.x();
+		transformStamped.transform.rotation.y = q.y();
+		transformStamped.transform.rotation.z = q.z();
+		transformStamped.transform.rotation.w = q.w();
 
 		br.sendTransform(transformStamped);
 
@@ -722,9 +725,9 @@ void print_map(const MapType & m)
 			if (c.landmarks_[i].numDetections_ > 0)
 			{
 
-				map_cloud->at(nmap).x = c.landmarks_[i].pPoint->estimate()[0];
-				map_cloud->at(nmap).y = c.landmarks_[i].pPoint->estimate()[1];
-				map_cloud->at(nmap).z = c.landmarks_[i].pPoint->estimate()[2];
+				map_cloud->at(nmap).x = c.landmarks_[i].position[0];
+				map_cloud->at(nmap).y = c.landmarks_[i].position[1];
+				map_cloud->at(nmap).z = c.landmarks_[i].position[2];
 				
 				map_cloud->at(nmap).intensity = c.landmarks_[i].numDetections_ / (float)c.landmarks_[i].numFoV_;
 
@@ -754,13 +757,14 @@ void print_map(const MapType & m)
 		{
 			path.poses[i].header.stamp = now;
 			path.poses[i].header.frame_id = "map";
-			path.poses[i].pose.position.x = c.poses_[i].pPose->estimate().inverse().translation()[0];
-			path.poses[i].pose.position.y = c.poses_[i].pPose->estimate().inverse().translation()[1];
-			path.poses[i].pose.position.z = c.poses_[i].pPose->estimate().inverse().translation()[2];
-			path.poses[i].pose.orientation.x = c.poses_[i].pPose->estimate().inverse().rotation().x();
-			path.poses[i].pose.orientation.y = c.poses_[i].pPose->estimate().inverse().rotation().y();
-			path.poses[i].pose.orientation.z = c.poses_[i].pPose->estimate().inverse().rotation().z();
-			path.poses[i].pose.orientation.w = c.poses_[i].pPose->estimate().inverse().rotation().w();
+			path.poses[i].pose.position.x = c.poses_[i].pose.translation()[0];
+			path.poses[i].pose.position.y = c.poses_[i].pose.translation()[1];
+			path.poses[i].pose.position.z = c.poses_[i].pose.translation()[2];
+			auto q =  c.poses_[i].pose.rotation().toQuaternion();
+			path.poses[i].pose.orientation.x = q.x();
+			path.poses[i].pose.orientation.y = q.y();
+			path.poses[i].pose.orientation.z = q.z();
+			path.poses[i].pose.orientation.w = q.w();
 		}
 		trajectory_pub.publish(path);
 
@@ -777,10 +781,11 @@ void print_map(const MapType & m)
 			gtpath.poses[i].pose.position.x = gt_traj.trajectory[i].pose.translation()[0];
 			gtpath.poses[i].pose.position.y = gt_traj.trajectory[i].pose.translation()[1];
 			gtpath.poses[i].pose.position.z = gt_traj.trajectory[i].pose.translation()[2];
-			gtpath.poses[i].pose.orientation.x = gt_traj.trajectory[i].pose.rotation().x();
-			gtpath.poses[i].pose.orientation.y = gt_traj.trajectory[i].pose.rotation().y();
-			gtpath.poses[i].pose.orientation.z = gt_traj.trajectory[i].pose.rotation().z();
-			gtpath.poses[i].pose.orientation.w = gt_traj.trajectory[i].pose.rotation().w();
+			auto q =  gt_traj.trajectory[i].pose.rotation().toQuaternion();
+			gtpath.poses[i].pose.orientation.x = q.x();
+			gtpath.poses[i].pose.orientation.y = q.y();
+			gtpath.poses[i].pose.orientation.z = q.z();
+			gtpath.poses[i].pose.orientation.w = q.w();
 		}
 		gt_trajectory_pub.publish(gtpath);
 
@@ -817,11 +822,11 @@ void print_map(const MapType & m)
 		{
 		
 
-			as_marker.points[a].x = c.landmarks_[iter->second - c.landmarks_[0].id].pPoint->estimate()[0];
-			as_marker.points[a].y = c.landmarks_[iter->second - c.landmarks_[0].id].pPoint->estimate()[1];
-			as_marker.points[a].z = c.landmarks_[iter->second - c.landmarks_[0].id].pPoint->estimate()[2];
+			as_marker.points[a].x = c.landmarks_[iter->second - c.landmarks_[0].id].position[0];
+			as_marker.points[a].y = c.landmarks_[iter->second - c.landmarks_[0].id].position[1];
+			as_marker.points[a].z = c.landmarks_[iter->second - c.landmarks_[0].id].position[2];
 
-			auto point_world_frame = c.poses_[k].pPose->estimate().inverse().map(c.poses_[k].point_camera_frame[iter->first]);
+			auto point_world_frame = c.poses_[k].pose.transformFrom(c.poses_[k].point_camera_frame[iter->first]);
 
 			as_marker.points[a+1].x = point_world_frame[0];
 			as_marker.points[a+1].y = point_world_frame[1];
@@ -904,23 +909,13 @@ void print_map(const MapType & m)
 			for (auto it = bimap.begin(), it_end = bimap.end(); it != it_end;
 				 it++)
 			{
-				c.landmarks_[it->right - c.landmarks_[0].pPoint->id()].numDetections_++;
+				c.landmarks_[it->right - c.landmarks_[0].id].numDetections_++;
 			}
 		}
 		updateGraph(c);
-		for(int i=0; i< c.maxpose_ && i < 1 ; i++){
-			c.poses_[i].pPose->setFixed(true);
-		}
-		c.optimizer_->initializeOptimization();
-		//c.optimizer_->computeInitialGuess();
-		c.optimizer_->setVerbose(false);
-		if (!c.optimizer_->verifyInformationMatrices(true)){
-			std::cerr << "info is bad\n";
-		}
+
 		checkDA(c);
-		//int g2o_result = c.optimizer_->optimize(config.numLevenbergIterations_);
-		//assert(g2o_result > 0);
-		//checkDA(c);
+
 	}
 	void VectorGLMBSLAM6D::sampleComponents()
 	{
@@ -967,8 +962,9 @@ void print_map(const MapType & m)
 			// add data association j to component i
 			changeDA(components_[i], it->first);
 			for(int numpose = 0 ; numpose < components_[i].poses_.size() ; numpose++){
-				components_[i].poses_[numpose].pPose->setEstimate(it->second.trajectory[numpose].pose);	
-				components_[i].poses_[numpose].invPose = components_[i].poses_[numpose].pPose->estimate().inverse();	
+
+				components_[i].poses_[numpose].pose = it->second.trajectory[numpose].pose;	
+
 				if (numpose>0){
 					double dist = (it->second.trajectory[numpose].pose.translation()-it->second.trajectory[numpose-1].pose.translation()).norm();
 					//assert (dist<0.1);
@@ -1374,6 +1370,12 @@ void print_map(const MapType & m)
 		config.numPosesToOptimize_ = node["numPosesToOptimize"].as<int>();
 		config.finalStateFile_ = node["finalStateFile"].as<std::string>();
 
+
+		config.isam2_parameters.relinearizeThreshold = node["relinearizeThreshold"].as<double>();
+		config.isam2_parameters.relinearizeSkip = node["relinearizeSkip"].as<int>();
+		config.isam2_parameters.cacheLinearizedFactors = node["cacheLinearizedFactors"].as<bool>();
+		config.isam2_parameters.enableDetailedResults = node["enableDetailedResults"].as<bool>();
+
 		if (!YAML::convert<Eigen::Matrix3d>::decode(node["anchorInfo"],
 													config.anchorInfo_))
 		{
@@ -1386,6 +1388,9 @@ void print_map(const MapType & m)
 			std::cerr << "could not load odom info matrix \n";
 			exit(1);
 		}
+		config.odom_noise = gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector6(1/config.odomInfo_(0,0),
+		 1/config.odomInfo_(1,1), 1/config.odomInfo_(2,2), 1/config.odomInfo_(3,3), 
+		 1/config.odomInfo_(4,4), 1/config.odomInfo_(5,5) ));
 
 		if (!YAML::convert<Eigen::Matrix3d>::decode(node["stereoInfo"],
 													config.stereoInfo_))
@@ -1393,6 +1398,7 @@ void print_map(const MapType & m)
 			std::cerr << "could not load stereo info matrix \n";
 			exit(1);
 		}
+		config.stereo_noise = gtsam::noiseModel::Isotropic::Sigma(3, 1/config.stereoInfo_(0,0) );
 
 		double focal_length = node["camera.focal_length"].as<double>();
 
@@ -1414,10 +1420,8 @@ void print_map(const MapType & m)
 			std::cerr << "could not load base_link_to_cam0 \n";
 			exit(1);
 		}
-		config.base_link_to_cam0_se3.setTranslation( config.base_link_to_cam0.col(3).head(3));
-		Eigen::Matrix3d rotMat= config.base_link_to_cam0.block(0,0,3,3);
-		Eigen::Quaterniond q(rotMat)  ;
-		config.base_link_to_cam0_se3.setRotation( q );
+		config.base_link_to_cam0_se3 = PoseType( config.base_link_to_cam0);
+
 
 
 		for (auto camera : node["camera_params"])
@@ -1478,10 +1482,13 @@ void print_map(const MapType & m)
 		Eigen::Vector2d principal_point = {config.camera_parameters_[0].cx,
 										   config.camera_parameters_[0].cy};
 
-		config.g2o_cam_params = new g2o::CameraParameters(
-			config.camera_parameters_[0].fx, principal_point,
-			config.stereo_baseline);
-		config.g2o_cam_params->setId(0);
+		config.cam_params = boost::make_shared<gtsam::Cal3_S2Stereo>(config.camera_parameters_[0].fx ,
+																	config.camera_parameters_[0].fy ,
+																	0 ,                                     // 0 skew
+																	config.camera_parameters_[0].cx ,
+																	config.camera_parameters_[0].cy ,
+																	config.stereo_baseline);
+
 
 		cv::Mat R_r1_u1, R_r2_u2;
 		cv::Mat P1, P2, Q;
@@ -1561,76 +1568,25 @@ void print_map(const MapType & m)
 	double VectorGLMBSLAM6D::distance(PoseType *pose, PointType *lm)
 	{
 
-		Eigen::Vector3d point_in_camera_frame = pose->estimate().map(
-			lm->estimate());
-		return point_in_camera_frame.norm();
+
+		return (pose->translation()-*lm).norm();
 	}
 
 	inline void VectorGLMBSLAM6D::deleteComponents(){
-	for (auto &c : components_)
-		{
-			deleteLandmarks(c);
-			deleteMeasurements(c);
-			delete c.solverLevenberg_;
-			delete c.optimizer_;
-		}
+
 		components_.clear();
 	}
-	inline void VectorGLMBSLAM6D::deleteLandmarks(VectorGLMBComponent6D &c){
-		for (auto &lm: c.landmarks_ ){
-			delete lm.pPoint;
-		}
-		c.landmarks_.clear();
 
-	}
-	inline void VectorGLMBSLAM6D::deleteMeasurements(VectorGLMBComponent6D &c){
-		for(int k =0; k<c.poses_.size(); k++){
-			for(auto &z: c.poses_[k].Z_){
-				delete z;
-			}
-			delete c.poses_[k].pPose;
-			
-		}
-		for(auto odo:c.odometries_){
-			delete odo;
-		}
-		c.odometries_.clear();
-		c.poses_.clear();
-	}
 
 
 	inline void VectorGLMBSLAM6D::initComponents()
 	{
-		components_.resize(config.numComponents_);
-		int i = 0;
-		for (auto &c : components_)
-		{
-			init(c);
-			constructGraph(c);
-
-			// optimize once at the start to calculate the hessian.
-			c.poses_[0].pPose->setFixed(true);
-			for(int k = 0; k< config.staticframes-config.minframe ; k++){
-				c.poses_[k].pPose->setFixed(true);
-			}
-
-			c.optimizer_->initializeOptimization();
-			//c.optimizer_->computeInitialGuess();
-			c.optimizer_->setVerbose(false);
-			std::string filename = config.resultFolder+std::string("/init") + std::to_string(i++) + ".g2o";
-			c.optimizer_->save(filename.c_str(), 0);
-		if (!c.optimizer_->verifyInformationMatrices(true)){
-			std::cerr << "info is bad\n";
+		
+		for (int i=0; i< config.numComponents_ ;i++){
+			components_.emplace_back(config.cam_params, config.isam2_parameters);
+			init(components_[i]);
 		}
-			// int niterations = c.optimizer_->optimize(1);
-			// std::cout << "niterations  " << niterations << "\n";
-			// assert(niterations > 0);
-		}
-
-		// Visualization
-		if (config.use_gui_)
-		{
-		}
+		
 	}
 	inline void VectorGLMBSLAM6D::run(int numSteps)
 	{
@@ -1675,12 +1631,6 @@ void print_map(const MapType & m)
 		}
 	}
 
-	void VectorGLMBSLAM6D::updatePoses(VectorGLMBComponent6D &c){
-		for(int k=0; k<c.poses_.size() ;k++){
-			c.poses_[k].invPose = c.poses_[k].pPose->estimate().inverse();
-		}
-
-	}
 
 	void VectorGLMBSLAM6D::updateDescriptors(VectorGLMBComponent6D &c){
 		
@@ -1701,39 +1651,40 @@ void print_map(const MapType & m)
 		}
 
 		if (max_detection_time>0){
-			auto displacement = c.poses_[max_detection_time-1].pPose->estimate()*c.poses_[max_detection_time].pPose->estimate().inverse();
-			auto current_pose = c.poses_[max_detection_time].invPose;
+			auto displacement = c.poses_[max_detection_time-1].pose.inverse()*c.poses_[max_detection_time].pose;
+			auto current_pose = c.poses_[max_detection_time].pose;
 
 			for(int k = max_detection_time+1 ; k < c.poses_.size() ; k++){
-				//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
 				current_pose = current_pose*displacement;
 				
-				c.poses_[k].invPose = current_pose;
+				c.poses_[k].pose = current_pose;
 
-				c.poses_[k].pPose->setEstimate(current_pose.inverse());
 			}
 		}
 
 		for(int k = startk ; k < c.poses_.size() ; k++){
 			int numdet = c.DA_bimap_[k].size();
 			if (numdet > 10) continue;
-			//g2o::Vector6 p_v = (c.poses_[k-1].pPose->estimate().toMinimalVector()+c.poses_[k].pPose->estimate().toMinimalVector()+c.poses_[k+1].pPose->estimate().toMinimalVector())*(1.0/3.0);
 			double d = uni_dist(randomGenerators_[threadnum]);
-			g2o::Vector6 p_v;
-
-			p_v = c.poses_[k].pPose->estimate().inverse().toMinimalVector();
-
-			double dist = (c.poses_[k].pPose->estimate().inverse().translation()-c.poses_[k-1].pPose->estimate().inverse().translation()).norm();
 
 
-			p_v[0] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans;
-			p_v[1] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans;
-			p_v[2] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans;
-			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot;
-			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot;
-			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot;
-			gtsam::Pose3 pos(p_v);
-			c.poses_[k].pPose->setEstimate(pos.inverse());
+			
+
+			double dist = (c.poses_[k].pose.translation()-c.poses_[k-1].pose.translation()).norm();
+
+			gtsam::Point3 translation_noise(gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans
+			, gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans  
+			, gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans);
+
+
+			gtsam::Pose3 noise(gtsam::Rot3::Rodrigues(gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot,
+			gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot,
+			gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot), translation_noise);
+
+
+
+			c.poses_[k].pose = c.poses_[k].pose * noise;
+
 		}
 
 
@@ -1758,16 +1709,9 @@ void print_map(const MapType & m)
 		{
 
 			updateGraph(c);
-			for(int k = 0; k< config.staticframes-config.minframe ; k++){
-				c.poses_[k].pPose->setFixed(true);
-			}
-			c.optimizer_->initializeOptimization();
-			//c.optimizer_->computeInitialGuess();
-			c.optimizer_->setVerbose(false);
-			if (!c.optimizer_->verifyInformationMatrices(true)){
-				std::cerr << "info is bad\n";
-			}
-			int niterations = c.optimizer_->optimize(30);
+
+			c.isam.update(c.graph, c.current_estimate);
+
 			assert(niterations > 0);
 			// calculateWeight(c);
 			moveBirth(c);
@@ -1946,126 +1890,7 @@ void print_map(const MapType & m)
 			std::cout << "sampling compos \n";
 		}
 
-// 		if (iteration_ % config.crossoverNumIter_ == 0 and false)
-// 		{
 
-// 			std::cout << termcolor::magenta
-// 					  << " =========== SexyTime!============\n"
-// 					  << termcolor::reset;
-// 			for (int i = 0; i < components_.size(); i++)
-// 			{
-// 				auto &c = components_[i];
-// 				c.maxpose_ = maxpose_;
-
-// 				boost::uniform_int<> random_component(0, components_.size() - 1);
-// 				int secondComp;
-// 				do
-// 				{
-// 					secondComp = random_component(rfs::randomGenerators_[0]);
-// 				} while (secondComp == i);
-// 				auto da = sexyTime(c, components_[secondComp]);
-// 				changeDA(c, da);
-// 			}
-// #pragma omp parallel for
-// 			for (int i = 0; i < components_.size(); i++)
-// 			{
-
-// 				if (maxpose_prev_ != maxpose_)
-// 				{
-// 					auto &c = components_[i];
-// 					selectNN( c);
-// 					updateGraph(c);
-// 					for(int k=0; k< c.maxpose_ && k < 1 ; k++){
-// 						c.poses_[k].pPose->setFixed(true);
-// 					}
-// 					c.optimizer_->initializeOptimization();
-// 					//c.optimizer_->computeInitialGuess();
-// 					c.optimizer_->setVerbose(false);
-// 					if (!c.optimizer_->verifyInformationMatrices(true)){
-// 						std::cerr << "info is bad\n";
-// 					}
-// 					int niterations = c.optimizer_->optimize(ni);
-// 					assert(niterations > 0);
-
-// 					updateFoV(c);
-// 					// std::cout << "fov update: \n";
-
-// 					moveBirth(c);
-// 					updateDAProbs(c, minpose_, maxpose_);
-// 					// std::cout << "da update: \n";
-// 					c.prevDA_bimap_ = c.DA_bimap_;
-// 					double expectedChange = 0;
-// 					bool inserted;
-// 					selectNN(c);
-// 					//	std::cout << "nn update: \n";
-// 					//updateGraph(c);
-// 					for(int k=0; k< c.maxpose_ && k < 1 ; k++){
-// 						c.poses_[k].pPose->setFixed(true);
-// 					}
-// 					c.optimizer_->initializeOptimization();
-// 					//c.optimizer_->computeInitialGuess();
-// 					c.optimizer_->setVerbose(false);
-// 					if (!c.optimizer_->verifyInformationMatrices(true)){
-// 						std::cerr << "info is bad\n";
-// 					}
-// 					niterations = c.optimizer_->optimize(ni);
-// 					assert(niterations > 0);
-// 					calculateWeight(c);
-
-// 					std::map<
-// 					std::vector<boost::bimap<int, int, boost::container::allocator<int>>>,
-// 					TrajectoryWeight>::iterator it;
-// 					#pragma omp critical(bestweight)
-// 					{
-// 						if (c.logweight_ > bestWeight_)
-// 						{
-// 							bestWeight_ = c.logweight_;
-// 							best_DA_ = c.DA_bimap_;
-// 							best_DA_max_detection_time_ = maxpose_ - 1;
-// 							while (best_DA_max_detection_time_ > 0 && best_DA_[best_DA_max_detection_time_].size() == 0)
-// 							{
-// 								best_DA_max_detection_time_--;
-// 							}
-// 							std::stringstream filename;
-
-// 							filename << "video/beststate_" << std::setfill('0')
-// 									 << std::setw(5) << iterationBest_++ << ".g2o";
-// 							c.optimizer_->save(filename.str().c_str(), 0);
-// 							std::cout << termcolor::yellow << "========== newbest:"
-// 									  << bestWeight_ << " ============\n"
-// 									  << termcolor::reset;
-// 							//printDA(c);
-// 							if (config.use_gui_)
-// 							{
-// 								std::cout << termcolor::yellow << "========== piblishingmarkers:"
-// 										  << bestWeight_ << " ============\n"
-// 										  << termcolor::reset;
-// 								publishMarkers(c);
-// 							}
-// 						}
-// 					}
-// 					TrajectoryWeight to_insert;
-// 					to_insert.weight = c.logweight_;
-// 					to_insert.trajectory.resize(c.poses_.size() );
-// 					for(int numpose =0; numpose< maxpose_; numpose++){
-// 						to_insert.trajectory[numpose]=c.poses_[numpose].pPose->estimate();
-// 					}
-// 					for(int numpose = maxpose_; numpose< c.poses_.size(); numpose++){
-// 						to_insert.trajectory[numpose]=c.poses_[maxpose_-1].pPose->estimate();
-// 					}
-
-// 					auto pair = std::make_pair(c.DA_bimap_, to_insert);
-// 					#pragma omp critical(insert)
-// 					{
-// 						std::tie(it, inserted) = visited_.insert(pair);
-// 						insertionP_ = insertionP_ * 0.9;
-// 						if (inserted)
-// 							insertionP_ += 0.1;
-// 					}
-// 					//it->second = c.logweight_;
-// 				}
-// 			}
-// 		}
 		#pragma omp parallel for
 		for (int i = 0; i < components_.size(); i++)
 		{
@@ -2083,13 +1908,8 @@ void print_map(const MapType & m)
 			// 		//c.poses_[k].pPose->setMarginalized(true);
 			// 	}
 			// }
-			for(int k = 1; k< maxpose_ ; k++){
-				c.odometries_[k-1]->setLevel(0);
-			}
-			for(int k = maxpose_; k< c.poses_.size() ; k++){
-				//c.poses_[k].pPose->setFixed(true);
-				c.odometries_[k-1]->setLevel(2);
-			}
+
+
 
 			int threadnum = 0;
 			#ifdef _OPENMP
@@ -2099,21 +1919,16 @@ void print_map(const MapType & m)
 			updateGraph(c);
 			moveBirth(c);
 			checkGraph(c);
-			for(int k = 0; k< config.staticframes-config.minframe ; k++){
-				c.poses_[k].pPose->setFixed(true);
-			}
-			// for(int k = std::max(config.staticframes-config.minframe,0); k< minpose_ ; k++){
+			// for(int k = 0; k< config.staticframes-config.minframe ; k++){
 			// 	c.poses_[k].pPose->setFixed(true);
 			// }
-			c.poses_[0].pPose->setFixed(true);
+
+			// c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
 			//c.optimizer_->computeInitialGuess();
 			c.optimizer_->setVerbose(false);
-			//std::cout  << "optimizing \n";
-			//c.optimizer_->save("initial.g2o");
 
-			//int niterations = opt1(c.optimizer_ , 1);
-			//assert(niterations > 0);
+
 
 			bool inserted;
 			std::map<
@@ -2122,7 +1937,6 @@ void print_map(const MapType & m)
 
 			if (iteration_ % 20 ==0){
 				int niterations = opt1(c.optimizer_ , 20);
-				updatePoses(c);
 				moveBirth(c);
 				updateMetaStates(c);
 				updateFoV(c);
@@ -2151,10 +1965,8 @@ void print_map(const MapType & m)
 
 			}
 			perturbTraj(c);
-			updatePoses(c);
 			moveBirth(c);
-			//std::cout  << "optimized \n";
-			//c.optimizer_->save("01.g2o");
+
 			updateMetaStates(c);
 
 			checkGraph(c);
@@ -2162,14 +1974,7 @@ void print_map(const MapType & m)
 			updateFoV(c);
 			checkNumDet(c);
 			checkGraph(c);
-			//std::cout  << "optimizing \n";
-			// if (!c.optimizer_->verifyInformationMatrices(true)){
-			// 	std::cerr << "info is bad\n";
-			// }
-			// niterations = c.optimizer_->optimize(ni);
-			// assert(niterations > 0);
-			//std::cout  << "optimized \n";
-			//c.optimizer_->save("02.g2o");
+
 			if (!c.reverted_)
 				updateDAProbs(c, minpose_, maxpose_);
 			for (int p = 0; p < maxpose_; p++)
@@ -2224,7 +2029,6 @@ void print_map(const MapType & m)
 					// c.poses_[0].pPose->setFixed(true);
 					c.optimizer_->initializeOptimization();
 					int niterations = opt2(c.optimizer_ , 1);
-					updatePoses(c);
 					moveBirth(c);
 					updateMetaStates(c);
 
@@ -2316,19 +2120,19 @@ void print_map(const MapType & m)
 			updateGraph(c);
 			moveBirth(c);
 			checkGraph(c);
-			for(int k = 0; k< config.staticframes-config.minframe ; k++){
-				c.poses_[k].pPose->setFixed(true);
-			}
-			if ( iteration_%20==0){
-				for(int k = std::max(config.staticframes-config.minframe,0); k < minpose_ ; k++){
-					c.poses_[k].pPose->setFixed(false);
-				}
-			}else {
-				for(int k = std::max(config.staticframes-config.minframe,0); k < minpose_ ; k++){
-					c.poses_[k].pPose->setFixed(true);
-				}
-			}
-			c.poses_[0].pPose->setFixed(true);
+			// for(int k = 0; k< config.staticframes-config.minframe ; k++){
+			// 	c.poses_[k].pPose->setFixed(true);
+			// }
+			// if ( iteration_%20==0){
+			// 	for(int k = std::max(config.staticframes-config.minframe,0); k < minpose_ ; k++){
+			// 		c.poses_[k].pPose->setFixed(false);
+			// 	}
+			// }else {
+			// 	for(int k = std::max(config.staticframes-config.minframe,0); k < minpose_ ; k++){
+			// 		c.poses_[k].pPose->setFixed(true);
+			// 	}
+			// }
+			// c.poses_[0].pPose->setFixed(true);
 			c.optimizer_->initializeOptimization();
 			//c.optimizer_->computeInitialGuess();
 			c.optimizer_->setVerbose(false);
@@ -2336,7 +2140,6 @@ void print_map(const MapType & m)
 				std::cerr << "info is bad\n";
 			}
 			int niterations = opt3(c.optimizer_ , ni);
-			updatePoses(c);
 			moveBirth(c);
 			updateMetaStates(c);
 			updateFoV(c);
@@ -2366,7 +2169,7 @@ void print_map(const MapType & m)
 				double dist = (c.poses_[numpose].pPose->estimate().inverse().translation()-c.poses_[numpose-1].pPose->estimate().inverse().translation()).norm();
 				if (dist>0.1){
 					std::cout << termcolor::red << "dist to high setting w to -inf"  << "\n";
-					std::cout << "chi2 " << c.odometries_[numpose-1]->chi2() << "\n";
+					std::cout << "loglikelihood " << c.odometries_[numpose-1]->error() << "\n";
 					std::cout << "globalchi2 " << c.optimizer_->activeChi2() << "\n";
 					std::cout << "dist " << dist << "\n" << termcolor::reset ;
 				
@@ -2407,12 +2210,12 @@ void print_map(const MapType & m)
 					{
 						best_DA_max_detection_time_--;
 					}
-					filename << config.resultFolder << "/video/beststate_" << std::setfill('0')
-							 << std::setw(5) << iterationBest_++ << ".g2o";
-					c.optimizer_->save(filename.str().c_str(), 0);
-					std::cout << termcolor::yellow << "========== newbest:"
-							  << bestWeight_ << " ============\n"
-							  << termcolor::reset;
+					// filename << config.resultFolder << "/video/beststate_" << std::setfill('0')
+					// 		 << std::setw(5) << iterationBest_++ << ".g2o";
+					// c.optimizer_->save(filename.str().c_str(), 0);
+					// std::cout << termcolor::yellow << "========== newbest:"
+					// 		  << bestWeight_ << " ============\n"
+					// 		  << termcolor::reset;
 					std::cout << "globalchi2 " << c.optimizer_->activeChi2() << "\n";
 					std::cout <<"  determinant: " << c.linearSolver_->_determinant<< "\n";
 					// for ( int numpose =1 ; numpose < maxpose_; numpose++){
@@ -2619,13 +2422,10 @@ void print_map(const MapType & m)
 		
 		for (int k = 0; k < maxpose_; k++)
 		{
-			if (c.optimizer_->vertex(c.poses_[k].pPose->id())==NULL){
-				c.optimizer_->addVertex(c.poses_[k].pPose);
-
-			}
-			if(k>0){
-				if (c.optimizer_->edges().find(c.odometries_[k-1]) == c.optimizer_->edges().end())
-					c.optimizer_->addEdge(c.odometries_[k-1]);
+			if (!c.current_estimate.exists(k)){
+				c.graph.push_back(c.odometries_[k-1]);
+				auto new_pose = c.current_estimate.at(k-1);
+				c.current_estimate.insert(k,new_pose);
 			}
 		}
 		
@@ -3686,7 +3486,7 @@ void print_map(const MapType & m)
 					{
 						double predScale=0;
 						if (associated || c.poses_[k].isInFrustum(&c.landmarks_[lm],
-													config.viewingCosLimit_, config.g2o_cam_params, &predScale))
+													config.viewingCosLimit_, config.cam_params, &predScale))
 						{
 
 							c.poses_[k].fov_.push_back(c.landmarks_[lm].pPoint->id());
@@ -3734,52 +3534,7 @@ void print_map(const MapType & m)
 				c.DAProbs_[k][nz].i.push_back(-5);
 				c.DAProbs_[k][nz].l.push_back(config.logKappa_);
 			}
-			// double posHLogDet;
-			// if (!c.poses_[k].pPose->fixed())
-			// {
-			// 	posHLogDet = std::log(c.poses_[k].pPose->hessianDeterminant());
-			// }
-			// PoseType::HessianBlockType poseHessian(
-			// 	c.poses_[k].pPose->hessianData());
 
-
-				// setting the topology of DAProbs to include all measurements in current FoV
-				
-				//c.DAProbs_[k][nz].i = c.poses_[k].fov_;
-				//prechecking daprobs with descriptor distance
-
-				// for(auto lmidx:c.poses_[k].fov_){
-				// 	auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
-				// 	// int dist = descriptorDistance(c.poses_[k].descriptors_left.row(c.poses_[k].matches_left_to_right[nz].queryIdx),
-				// 	// lm.descriptor);
-				// 	int dist = ORBDescriptor::distance(lm.descriptor , c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
-
-				// 	if (dist < 80){
-				// 		c.DAProbs_[k][nz].i.push_back(lmidx); 
-				// 	}
-					
-				// }
-				// c.DAProbs_[k][nz].i.push_back(-5); // add posibility of false alarm
-				// c.DAProbs_[k][nz].l.resize(c.DAProbs_[k][nz].i.size());
-
-				
-				// Eigen::Matrix<double, PoseType::HessianBlockType::RowsAtCompileTime,
-				// 			  PoseType::HessianBlockType::ColsAtCompileTime>
-				// 	poseHessianCopy;
-
-				// if (!c.poses_[k].pPose->fixed())
-				// {
-				// 	poseHessianCopy = poseHessian;
-				// }
-				// if (selectedDA >= 0)
-				// {
-				// 	c.poses_[k].Z_[nz]->g2o::BaseBinaryEdge<3, g2o::Vector3, PointType, PoseType>::linearizeOplus(jac_ws);
-				// 	StereoMeasurementEdge::JacobianXjOplusType Jpose =
-				// 		c.poses_[k].Z_[nz]->jacobianOplusXj();
-				// 	poseHessianCopy -= Jpose.transpose() * c.poses_[k].Z_[nz]->information() * Jpose;
-				// }
-
-				// double avg_desc_likelihood = 0;
 
 				for(int lmFovIdx =0; lmFovIdx <c.poses_[k].fov_.size();lmFovIdx++){
 					int lmidx = c.poses_[k].fov_[lmFovIdx];
@@ -3793,19 +3548,7 @@ void print_map(const MapType & m)
 						StereoMeasurementEdge  &z = *c.poses_[k].Z_[nz];
 						double p=0.0;
 
-						// auto it = c.DA_bimap_[k].left.find(nz);
-						// int selectedDA = -5;
-						// if (it != c.DA_bimap_[k].left.end())
-						// {
-						// 	selectedDA = it->second;
-						// }
-						// if (selectedDA < 0){
-						// 	assert(c.poses_[k].Z_[nz]->vertex(0) == NULL);
-						// 	assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) == c.optimizer_->edges().end() );
-						// }else{
-						// 	assert(c.poses_[k].Z_[nz]->vertex(0)->id() == selectedDA);
-						// 	assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
-						// }
+
 
 
 
@@ -3830,187 +3573,14 @@ void print_map(const MapType & m)
 						p += desclikelihood;
 
 						p += std::log(config.PD_) - std::log(1 - config.PD_);
-						// c.poses_[k].Z_[nz]->setVertex(0, lm.pPoint);
-
-						//c.poses_[k].Z_[nz]->g2o::BaseBinaryEdge<3, g2o::Vector3, PointType, PoseType>::linearizeOplus(jac_ws);
-						//c.poses_[k].Z_[nz]->computeError();
 						
-
-
-						// if pose is not fixed, calc updated pose and lm
-						// if (false && !c.poses_[k].pPose->fixed())
-						// {
-						// 	PointType::HessianBlockType::PlainMatrix pointHessian;
-						// 	//PointType::HessianBlockType pointHessian(h.data());
-
-						// 	if (c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].numDetections_ > 0)
-						// 	{
-						// 		// assert(c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData()!=NULL);
-						// 		// new (&pointHessian) PointType::HessianBlockType(
-						// 		// 	c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
-						// 		for (int i= 0; i < pointHessian.rows(); i++){
-						// 			for (int j; j< pointHessian.cols() ;j++){
-						// 				pointHessian(i,j) = lm.pPoint->hessian(i,j);
-						// 			}
-						// 		}
-						// 		//h = lm.pPoint->hessian();
-
-						// 		// std::cout << "g2o pointH: " << pointHessian << "\n\n\n";
-						// 	}
-						// 	else
-						// 	{
-						// 		pointHessian = config.anchorInfo_;
-						// 		// std::cout << "calc pointH: " << pointHessian << "\n\n\n";
-						// 	}
-						// 	// std::cout << "numdetections:  " << c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].numDetections_  << "\n";
-
-						// 	StereoMeasurementEdge::JacobianXjOplusType Jpose =
-						// 		c.poses_[k].Z_[nz]->jacobianOplusXj();
-						// 	StereoMeasurementEdge::JacobianXiOplusType Jpoint =
-						// 		c.poses_[k].Z_[nz]->jacobianOplusXi();
-
-						// 	Eigen::Matrix<double,
-						// 				  PoseType::Dimension + PointType::Dimension,
-						// 				  PoseType::Dimension + PointType::Dimension>
-						// 		H;
-						// 	Eigen::Matrix<double,
-						// 				  PoseType::Dimension + PointType::Dimension, 1>
-						// 		b, sol;
-						// 	H.setZero();
-
-						// 	H.block(0, 0, PoseType::Dimension, PoseType::Dimension) =
-						// 		poseHessianCopy;
-						// 	H.block(PoseType::Dimension, PoseType::Dimension,
-						// 			PointType::Dimension, PointType::Dimension) =
-						// 		pointHessian;
-
-						// 	H.block(0, 0, PoseType::Dimension, PoseType::Dimension) +=
-						// 		Jpose.transpose() * c.poses_[k].Z_[nz]->information() * Jpose;
-						// 	H.block(PoseType::Dimension, PoseType::Dimension,
-						// 			PointType::Dimension, PointType::Dimension) +=
-						// 		Jpoint.transpose() * c.poses_[k].Z_[nz]->information() * Jpoint;
-
-						// 	H.block(PoseType::Dimension, 0, PointType::Dimension,
-						// 			PoseType::Dimension) = Jpoint.transpose() * c.poses_[k].Z_[nz]->information() * Jpose;
-						// 	H.block(0, PoseType::Dimension, PoseType::Dimension,
-						// 			PointType::Dimension) = H.block(PoseType::Dimension, 0, PointType::Dimension,
-						// 											PoseType::Dimension)
-						// 										.transpose();
-						// 	b.block(0, 0, PoseType::Dimension, 1) =
-						// 		Jpose.transpose() * omega_r;
-						// 	b.block(PoseType::Dimension, 0, PointType::Dimension, 1) =
-						// 		Jpoint.transpose() * omega_r;
-
-						// 	Eigen::LLT<
-						// 		Eigen::Matrix<double,
-						// 					  PoseType::Dimension + PointType::Dimension,
-						// 					  PoseType::Dimension + PointType::Dimension>>
-						// 		lltofH(
-						// 			H);
-						// 	sol = lltofH.solve(b);
-						// 	double poseh_det = poseHessianCopy.determinant();
-						// 	double pointh_det = pointHessian.determinant();
-						// 	double updated_det = lltofH.matrixL().determinant();
-						// 	assert(poseh_det>0);
-						// 	assert(pointh_det>0);
-						// 	assert(updated_det>0);
-						// 	// double increase = std::log(updated_det) - (std::log(poseh_det)+std::log(pointh_det));
-
-						// 	// p += increase;
-						// 	// if (increase > 0){
-						// 	// 	assert(!isnan(p));
-						// 	// }
-						// 	assert(!isnan(p));
-						// 	double increase = std::log( c.poses_[k].Z_[nz]->information().determinant()) ;
-						// 	p += increase;
-						// 	if (increase > 0){
-						// 		assert(!isnan(p));
-						// 	}
-						// 	//increase = posHLogDet;
-
-						// 	// if (increase > 0){
-						// 	// 	assert(!isnan(p));
-						// 	// }
-
-						// 	// p += increase;
-						// 	assert(!isnan(p));
-
-						// 	p += -0.5 * (c.poses_[k].Z_[nz]->chi2() - sol.dot(b));
-						// 	assert(!isnan(p));
-						// 	p += -0.5 * c.poses_[k].Z_[nz]->dimension() * std::log(2 * M_PI);
-						// 	assert(!isnan(p));
-						// }
-						// else
-						{ // if pose is fixed only calculate updated landmark
-							//c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->solveDirect();
-							//auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
-							
-							// PointType::HessianBlockType::PlainMatrix h;
-							// PointType::HessianBlockType pointHessian(h.data());
-
-							// StereoMeasurementEdge::JacobianXiOplusType Jpoint =
-							// 	c.poses_[k].Z_[nz]->jacobianOplusXi();
-
-							// if (lm.numDetections_ != lm.pPoint->edges().size() ){
-							// 	checkDA(c);
-							// 	assert(0);
-							// }
-
-							// if (lm.numDetections_ > 0)
-							// {
-							// 	new (&pointHessian) PointType::HessianBlockType(
-							// 		c.landmarks_[lmidx - c.landmarks_[0].pPoint->id()].pPoint->hessianData());
-
-							// 	// std::cout << "g2o pointH: " << pointHessian << "\n\n\n";
-							// }
-							// else
-							// {
-							// 	h = config.anchorInfo_;
-							// 	// std::cout << "calc pointH: " << pointHessian << "\n\n\n";
-							// }
-
-							// Eigen::Matrix<double, PointType::Dimension,
-							// 			  PointType::Dimension>
-							// 	H, ph ;
-							// 	ph = pointHessian;
-							// H.setZero();
-							// if (pointHessian.allFinite()){
-							// 	H = pointHessian + Jpoint.transpose() * c.poses_[k].Z_[nz]->information() * Jpoint;
-							// }else{
-							// 	H =  Jpoint.transpose() * c.poses_[k].Z_[nz]->information() * Jpoint;
-
-							// }
-							// Eigen::Matrix<double, PointType::Dimension, 1> b, sol;
-							// b = Jpoint.transpose() * omega_r;
-
-							// Eigen::LLT<
-							// 	Eigen::Matrix<double, PointType::Dimension,
-							// 				  PointType::Dimension>>
-							// 	lltofH(H);
-							// sol = lltofH.solve(b);
-
-							// p += -std::log(
-							// 	lltofH.matrixL().determinant());
-							// assert(!isnan(p));
-							// p +=
-							// 	std::log(
-							// 		c.poses_[k].Z_[nz]->information().determinant());
-							// assert(!isnan(p));
-
-							// p += -0.5 * (c.poses_[k].Z_[nz]->chi2() - sol.dot(b));
-							
+						{ 
 							 p += -0.5 * (error_scalar*error_scalar*z.information()(0,0)); //chi2, this assumes information is a*Identity(3,3)
 							assert(!isnan(p));
 							p += -0.5 * c.poses_[k].Z_[nz]->dimension() * std::log(2 * M_PI);
 							assert(!isnan(p));
 
 
-							// 	std::cerr << "jp: " << Jpoint << "\n";
-							// 	std::cerr << "H: " << pointHessian << "\n";
-							// if (p != p){
-							// 	std::cerr << "nanerror\n";
-							// 	std::cerr << "nop\n";
-							// }
 
 
 
@@ -4026,32 +3596,13 @@ void print_map(const MapType & m)
 						// avg_desc_likelihood += desclikelihood;
 					}
 				}
-				// avg_desc_likelihood /= c.DAProbs_[k][nz].l.size()-1;
-				// for (int nl =1; nl < c.DAProbs_[k][nz].l.size(); nl++){
-				// 	c.DAProbs_[k][nz].l[nl] -= avg_desc_likelihood;
-				// }
 
 
 
 
 
-				// if (selectedDA >= 0)
-				// {
-				// 	c.poses_[k].Z_[nz]->setVertex(0,
-				// 								  dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.optimizer_->vertices().find(
-				// 																											selectedDA)
-				// 																					->second));
-				// 	//c.poses_[k].Z_[nz]->linearizeOplus();
-				// 	c.poses_[k].Z_[nz]->computeError();
-				// 	assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) != c.optimizer_->edges().end() );
-				// }
-				// else
-				// {
 
-				// 	c.poses_[k].Z_[nz]->setVertex(0, NULL);
-				// 	assert(c.optimizer_->edges().find(c.poses_[k].Z_[nz]) == c.optimizer_->edges().end() );
-					
-				// }
+
 			}
 		}
 	}
@@ -4194,18 +3745,14 @@ void print_map(const MapType & m)
 			//
 			if (k > 0)
 			{
-				OdometryEdge *odo = new OdometryEdge;
-				odo->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.poses_[k - 1].pPose));
-				odo->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.poses_[k].pPose));
-				gtsam::Pose3 q;
-				odo->setMeasurement(q);
-				odo->setInformation(config.odomInfo_);
+				PoseType odometry_pose(); // this is just zero odom , meaning brownian motion
+				OdometryEdge::shared_ptr odo = boost::make_shared<OdometryEdge>(k-1 , k , odometry_pose , config.odom_noise);
+
 				c.odometries_.push_back(odo);
 				if(k < maxpose_){
-					if (!c.optimizer_->addEdge(odo))
-					{
-						std::cerr << "odo edge insert fail \n";
-					}
+					c.graph.push_back(odo);
+				
+					
 				}
 
 			}

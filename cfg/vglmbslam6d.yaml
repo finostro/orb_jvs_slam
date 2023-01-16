@@ -62,6 +62,12 @@ eurocFolder: /home/finostro/euroc_dataset/V2_01_easy
 eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V201.txt
 stereo_init_max_depth: 60.0
 
+#isam2 params
+relinearizeThreshold : 0.01
+relinearizeSkip : 1
+cacheLinearizedFactors : false
+enableDetailedResults : true
+
 base_link_to_cam0:
   cols: 4
   rows: 4

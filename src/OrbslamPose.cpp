@@ -35,10 +35,10 @@ namespace rfs
 {
 
 
-        bool OrbslamPose::isInFrustum(OrbslamMapPoint *pMP, float viewingCosLimit, g2o::CameraParameters *cam_params, double * predictedScale)
+    bool OrbslamPose::isInFrustum(OrbslamMapPoint *pMP, float viewingCosLimit, gtsam::StereoCamera *camera, double * predictedScale)
         {
 
-        	Eigen::Vector3d  point_in_camera_frame = pPose->estimate().map(pMP->pPoint->estimate());
+            OrbslamPose::PointType  point_in_camera_frame = pose.transformTo(pMP->position);
             // std::cout <<"point_in_camera_frame   " <<point_in_camera_frame << "\n"
             //     << "z  " << point_in_camera_frame(2)  << "\n";
             // check depth
@@ -46,20 +46,23 @@ namespace rfs
             {
                 return false;
             }
-            Eigen::Vector3d uvu = cam_params->stereocam_uvu_map(point_in_camera_frame);
+            
+            gtsam::StereoPoint2  stereoPoint = camera->project( point_in_camera_frame );
+           
 
             // check image bounds
-            if (uvu(0) < mnMinX || uvu(0) > mnMaxX)
+            
+            if (stereoPoint.uL() < mnMinX || stereoPoint.uL() > mnMaxX)
             {
                 return false;
             }
 
-            if (uvu(1) < mnMinY || uvu(1) > mnMaxY)
+            if (stereoPoint.v() < mnMinY || stereoPoint.v() > mnMaxY)
             {
                 return false;
             }
 
-            if (uvu(2) < mnMinX || uvu(2) > mnMaxX)
+            if (stereoPoint.uR() < mnMinX || stereoPoint.uR() > mnMaxX)
             {
                 return false;
             }
@@ -74,7 +77,7 @@ namespace rfs
 
             // Check viewing angle
             Eigen::Vector3d Pn = pMP->normalVector;
-            Eigen::Vector3d viewingVector =pMP->pPoint->estimate()-invPose.translation();
+            Eigen::Vector3d viewingVector =pMP->position-pose.translation();
             
             const float viewCos = viewingVector.dot(Pn) / dist;
 
@@ -108,11 +111,10 @@ OrbslamPose::OrbslamPose(const OrbslamPose &other): mnScaleLevels(other.mnScaleL
 		uRight(other.uRight),
 		depth(other.depth),
 		matches_left_to_right(other.matches_left_to_right),
-		fov_(other.fov_)
+		fov_(other.fov_),
+        pose(other.pose)
 		{
-	if (other.pPose){
-		pPose = new PoseType(*other.pPose);
-	}
+
 	descriptors_left = other.descriptors_left;
 	descriptors_right = other.descriptors_right;
 
@@ -127,7 +129,7 @@ OrbslamPose::OrbslamPose(): mnScaleLevels(0),
 		mnMaxX(0),
 		mnMinY(0),
 		mnMaxY(0) {
-	pPose= NULL;
+
 
 }
 

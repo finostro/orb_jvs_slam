@@ -31,6 +31,12 @@
 #pragma once
 
 
+#include <gtsam/geometry/Pose3.h>
+#include <gtsam/geometry/Point3.h>
+#include <gtsam/geometry/Cal3_S2Stereo.h>
+#include <gtsam/geometry/StereoCamera.h>
+#include <gtsam/slam/StereoFactor.h>
+
 #include <opencv2/core/core.hpp>
 #include <vector>
 #include <external/ORBextractor.h>
@@ -89,7 +95,7 @@ namespace rfs
         std::vector<int> fov_; /**< indices of landmarks in field of view at time k */
         std::vector<int> predicted_scales; /**< predicted scales */
 
-        std::vector<StereoMeasurementEdge *> Z_; /**< Measurement edges stored, in order to set data association and add to graph later */
+        std::vector<StereoMeasurementEdge::shared_ptr> Z_; /**< Measurement edges stored, in order to set data association and add to graph later */
         std::vector<int > initial_lm_id; /**< Landmark id of measueremen Spawned by this measurement */
 
         /**
@@ -100,7 +106,7 @@ namespace rfs
          * @return true  point is in field of view
          * @return false point should not be measured
          */
-        bool isInFrustum(OrbslamMapPoint *pMP, float viewingCosLimit, g2o::CameraParameters *cam_params, double * predictedScale=NULL);
+        bool isInFrustum(OrbslamMapPoint *pMP, float viewingCosLimit,  gtsam::StereoCamera *camera, double * predictedScale=NULL);
 
 
         /**
