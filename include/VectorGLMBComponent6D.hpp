@@ -37,12 +37,14 @@
 #include <boost/container/allocator.hpp>
 
 
-#include "g2o/core/block_solver.h"
-#include "g2o/core/optimization_algorithm_levenberg.h"
-#include "g2o/solvers/csparse/linear_solver_csparse.h"
-#include "g2o/core/robust_kernel_impl.h"
-#include "g2o/types/sba/types_six_dof_expmap.h" // se3 poses
-
+#include <gtsam/geometry/Pose3.h>
+#include <gtsam/geometry/Cal3_S2Stereo.h>
+#include <gtsam/nonlinear/Values.h>
+#include <gtsam/nonlinear/NonlinearEquality.h>
+#include <gtsam/nonlinear/NonlinearFactorGraph.h>
+#include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
+#include <gtsam/slam/StereoFactor.h>
+#include <gtsam/slam/BetweenFactor.h>
 
 
 #include "OrbslamMapPoint.hpp"
@@ -71,22 +73,19 @@ struct AssociationProbabilities {
  * Struct to store a single component of a VGLMB , with its own g2o optimizer
  */
 struct VectorGLMBComponent6D {
-	typedef g2o::VertexSBAPointXYZ PointType;
-	typedef g2o::VertexSE3Expmap PoseType;
-	typedef g2o::EdgeProjectXYZ2UV MonocularMeasurementEdge;
-	typedef g2o::EdgeProjectXYZ2UVU StereoMeasurementEdge;
-	typedef g2o::EdgeSE3Expmap OdometryEdge;
-
-
-	typedef g2o::BlockSolver<g2o::BlockSolverTraits<-1, -1> > SlamBlockSolver;
-	typedef g2o::LinearSolverCSparse<SlamBlockSolver::PoseMatrixType> SlamLinearSolver;
-	g2o::SparseOptimizer *optimizer_;
+	typedef gtsam::Point3 PointType;
+	typedef gtsam::Pose3 PoseType;
+	typedef gtsam::GenericStereoFactor<gtsam::Pose3,gtsam::Point3> StereoMeasurementEdge;
+	typedef gtsam::BetweenFactor<gtsam::Pose3> OdometryEdge;
 
 
 
-	g2o::OptimizationAlgorithmLevenberg *solverLevenberg_;
-	SlamLinearSolver *linearSolver_;
-	SlamBlockSolver *blockSolver_;
+ 	gtsam::NonlinearFactorGraph graph;
+	gtsam::LevenbergMarquardtOptimizer optimizer;
+
+
+
+
 
 	std::vector<boost::bimap<int, int, boost::container::allocator<int>>>
 			DA_bimap_, prevDA_bimap_; /**< Bimap containing data association hypothesis at time k  */
@@ -113,23 +112,24 @@ struct VectorGLMBComponent6D {
 
 
 
-    void saveAsTUM(std::string filename, g2o::SE3Quat base_link_to_cam0_se3){
+    void saveAsTUM(std::string filename, PoseType base_link_to_cam0_se3){
 		std::ofstream file;
 		file.open(filename);
 		file << std::setprecision(20) ;
 
 		for (int k =0; k<maxpose_; k++){
 			auto &pose =poses_[k];
-			g2o::SE3Quat p = pose.pPose->estimate().inverse()*base_link_to_cam0_se3.inverse();
+			PoseType p = pose.pose*base_link_to_cam0_se3.inverse();
+			auto q = p.rotation().toQuaternion();
 			
 			file 	<< pose.stamp << " "
 					<< p.translation().x() << " "
 					<< p.translation().y() << " "
 					<< p.translation().z() << " "
-					<< p.rotation().x() << " "
-					<< p.rotation().y() << " "
-					<< p.rotation().z() << " "
-					<< p.rotation().w() << "\n";
+					<< q.x() << " "
+					<< q.y() << " "
+					<< q.z() << " "
+					<< q.w() << "\n";
 		}
 
 	}

@@ -48,12 +48,7 @@
 #include "OrbslamPose.hpp"
 #include "VectorGLMBComponent6D.hpp"
 
-#include "g2o/core/block_solver.h"
-#include "g2o/core/optimization_algorithm_levenberg.h"
-#include "g2o/solvers/csparse/linear_solver_csparse.h"
-#include "g2o/core/robust_kernel_impl.h"
 
-#include "g2o/types/sba/types_six_dof_expmap.h" // se3 poses
 
 #include <boost/random/uniform_real.hpp>
 #include <boost/random/uniform_int.hpp>
@@ -97,6 +92,18 @@
 
 #include <visualization_msgs/Marker.h>
 
+
+#include <gtsam/geometry/Pose3.h>
+#include <gtsam/geometry/Cal3_S2Stereo.h>
+#include <gtsam/nonlinear/Values.h>
+#include <gtsam/nonlinear/NonlinearEquality.h>
+#include <gtsam/nonlinear/NonlinearFactorGraph.h>
+#include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
+#include <gtsam/slam/StereoFactor.h>
+
+#include <gtsam/nonlinear/ISAM2.h>
+
+
 #ifdef _PERFTOOLS_CPU
 #include <gperftools/profiler.h>
 #endif
@@ -123,27 +130,16 @@ namespace rfs
 	};
 	struct StampedPose{
 		double stamp;
-		g2o::SE3Quat pose;
+		gtsam::Pose3 pose;
 	};
 
-	// for profiler
-int opt1(g2o::SparseOptimizer *optimizer, int ni){
-	return optimizer->optimize(ni);
-}
-int opt2(g2o::SparseOptimizer *optimizer, int ni){
-	return optimizer->optimize(ni);
-}
-
-int opt3(g2o::SparseOptimizer *optimizer, int ni){
-	return optimizer->optimize(ni);
-}
 
 
 	struct TrajectoryWeight{
 		double weight;
 		std::vector<StampedPose> trajectory;
 
-    void loadTUM(std::string filename, g2o::SE3Quat base_link_to_cam0_se3, double initstamp){
+    void loadTUM(std::string filename, gtsam::Pose3 base_link_to_cam0_se3, double initstamp){
 		std::ifstream file;
 		file.open(filename);
 		std::string line;
@@ -231,14 +227,12 @@ void print_map(const MapType & m)
 	class VectorGLMBSLAM6D
 	{
 	public:
-		typedef g2o::VertexSBAPointXYZ PointType;
-		typedef g2o::VertexSE3Expmap PoseType;
-		typedef g2o::EdgeProjectXYZ2UV MonocularMeasurementEdge;
-		typedef g2o::EdgeStereoSE3ProjectXYZ StereoMeasurementEdge;
-		typedef g2o::EdgeSE3Expmap OdometryEdge;
+		typedef gtsam::Point3 PointType;
+		typedef gtsam::Pose3 PoseType;
+		typedef gtsam::GenericStereoFactor<gtsam::Pose3,gtsam::Point3> StereoMeasurementEdge;
+		typedef gtsam::BetweenFactor<gtsam::Pose3> OdometryEdge;
 
-		typedef g2o::BlockSolver<g2o::BlockSolverTraits<-1, -1>> SlamBlockSolver;
-		typedef g2o::LinearSolverCSparse<SlamBlockSolver::PoseMatrixType> SlamLinearSolver;
+
 		/**
 		 * \brief Configurations for this  optimizer
 		 */
@@ -291,7 +285,7 @@ void print_map(const MapType & m)
 
 
 			Eigen::MatrixXd base_link_to_cam0;
-			g2o::SE3Quat base_link_to_cam0_se3;
+			gtsam::Pose3 base_link_to_cam0_se3;
 			// camera distortion params
 
 			struct CameraParams
@@ -1738,7 +1732,7 @@ void print_map(const MapType & m)
 			p_v[3] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot;
 			p_v[4] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot;
 			p_v[5] += gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot;
-			g2o::SE3Quat pos(p_v);
+			gtsam::Pose3 pos(p_v);
 			c.poses_[k].pPose->setEstimate(pos.inverse());
 		}
 
@@ -4190,7 +4184,7 @@ void print_map(const MapType & m)
 			c.poses_[k].mvInvLevelSigma2 = initial_component_.poses_[k].mvInvLevelSigma2;
 			// create graph pose
 			c.poses_[k].pPose = new PoseType();
-			g2o::SE3Quat pose_estimate;
+			gtsam::Pose3 pose_estimate;
 			c.poses_[k].pPose->setEstimate(pose_estimate);
 
 			c.poses_[k].pPose->setId(k);
@@ -4203,7 +4197,7 @@ void print_map(const MapType & m)
 				OdometryEdge *odo = new OdometryEdge;
 				odo->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.poses_[k - 1].pPose));
 				odo->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(c.poses_[k].pPose));
-				g2o::SE3Quat q;
+				gtsam::Pose3 q;
 				odo->setMeasurement(q);
 				odo->setInformation(config.odomInfo_);
 				c.odometries_.push_back(odo);

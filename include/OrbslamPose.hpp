@@ -30,7 +30,7 @@
 
 #pragma once
 
-#include "g2o/types/sba/types_six_dof_expmap.h" // se3 poses
+
 #include <opencv2/core/core.hpp>
 #include <vector>
 #include <external/ORBextractor.h>
@@ -44,13 +44,11 @@ namespace rfs
     {
 
     public:
-        typedef g2o::VertexSBAPointXYZ PointType;
-        typedef g2o::VertexSE3Expmap PoseType;
-        typedef g2o::EdgeProjectXYZ2UV MonocularMeasurementEdge;
-        typedef g2o::EdgeStereoSE3ProjectXYZ StereoMeasurementEdge;
+        typedef gtsam::Point3 PointType;
+        typedef gtsam::Pose3 PoseType;
+        typedef gtsam::GenericStereoFactor<gtsam::Pose3,gtsam::Point3> StereoMeasurementEdge;
 
-        PoseType *pPose; // this transforms world coordinates into camera coordinates
-        g2o::SE3Quat invPose; // inverse of optimizer , this is the common interpretation. as in ros TF 
+        PoseType pose; //  this is the common interpretation. as in ros TF 
 
         // Scale
          int mnScaleLevels;
