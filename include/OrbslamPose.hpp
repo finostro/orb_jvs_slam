@@ -66,6 +66,8 @@ namespace rfs
 
         //timestamp
         double stamp;
+
+        int id; // this is k 
         // iskeypose
 
         bool isKeypose;
@@ -96,6 +98,8 @@ namespace rfs
         std::vector<int> predicted_scales; /**< predicted scales */
 
         std::vector<StereoMeasurementEdge::shared_ptr> Z_; /**< Measurement edges stored, in order to set data association and add to graph later */
+        
+        std::vector<gtsam::StereoPoint2> stereo_points;
         std::vector<int > initial_lm_id; /**< Landmark id of measueremen Spawned by this measurement */
 
         /**
@@ -106,7 +110,7 @@ namespace rfs
          * @return true  point is in field of view
          * @return false point should not be measured
          */
-        bool isInFrustum(OrbslamMapPoint *pMP, float viewingCosLimit,  gtsam::StereoCamera *camera, double * predictedScale=NULL);
+        bool isInFrustum(OrbslamMapPoint *pMP, float viewingCosLimit,  gtsam::StereoCamera &camera, double * predictedScale=NULL);
 
 
         /**

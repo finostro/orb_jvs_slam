@@ -70,6 +70,7 @@ namespace rfs
         OrbslamPose *birthPose;
 
         std::vector<int> is_in_fov_;
+        std::set<int> is_detected;
         std::vector<int> predicted_scales;
 
         // Mean viewing direction

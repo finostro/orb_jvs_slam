@@ -83,9 +83,13 @@ struct VectorGLMBComponent6D {
 
 
 
- 	gtsam::NonlinearFactorGraph graph;
-	gtsam::Values current_estimate;
+ 	gtsam::NonlinearFactorGraph graph, new_edges;
+	gtsam::FactorIndices removed_edges;
+	gtsam::Values current_estimate, new_nodes;
 	gtsam::ISAM2 isam;
+	gtsam::ISAM2Result isam_result;
+
+	PoseType initial_pose;
 
 
 	gtsam::StereoCamera camera;
@@ -101,9 +105,12 @@ struct VectorGLMBComponent6D {
 	std::vector<OrbslamPose> poses_;
 	std::vector<OrbslamPose*> keyposes_;
 	std::vector<OdometryEdge::shared_ptr> odometries_;
+	std::vector<int> odometry_indices;
 	
 	std::vector<OrbslamMapPoint> landmarks_;
 	std::vector<double> landmarksResetProb_, landmarksInitProb_;
+
+	std::map<std::array<int , 3>, int > landmark_edge_indices;
 
 	double logweight_ = -std::numeric_limits<double>::infinity(),
 			prevLogWeight_ = -std::numeric_limits<double>::infinity();

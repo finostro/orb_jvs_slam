@@ -35,7 +35,7 @@ namespace rfs
 {
 
 
-    bool OrbslamPose::isInFrustum(OrbslamMapPoint *pMP, float viewingCosLimit, gtsam::StereoCamera *camera, double * predictedScale)
+    bool OrbslamPose::isInFrustum(OrbslamMapPoint *pMP, float viewingCosLimit, gtsam::StereoCamera &camera, double * predictedScale)
         {
 
             OrbslamPose::PointType  point_in_camera_frame = pose.transformTo(pMP->position);
@@ -47,7 +47,7 @@ namespace rfs
                 return false;
             }
             
-            gtsam::StereoPoint2  stereoPoint = camera->project( point_in_camera_frame );
+            gtsam::StereoPoint2  stereoPoint = camera.project( point_in_camera_frame );
            
 
             // check image bounds
