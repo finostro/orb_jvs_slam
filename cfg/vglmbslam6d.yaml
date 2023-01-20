@@ -13,7 +13,7 @@ PD: 0.8
 numIterations: 200
 numGibbs: 50
 numLandmarks: 100
-numComponents: 1
+numComponents: 16
 maxRange: 5
 numLevenbergIterations: 3
 tempFactor: 0.995

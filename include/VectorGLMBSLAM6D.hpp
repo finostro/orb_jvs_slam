@@ -2320,10 +2320,10 @@ void print_map(const MapType & m)
 		{
 			max_detection_time--;
 		}
-		for (int k = 1; k < max_detection_time; k++)
+		for (int k = 1; k <= max_detection_time; k++)
 		{
 			if (c.odometry_indices[k-1] < 0){
-				c.new_edges.push_back(c.odometries_[k]);
+				c.new_edges.push_back(c.odometries_[k-1]);
 			}
 		}
 
@@ -2408,7 +2408,7 @@ void print_map(const MapType & m)
 
 
 		
-		for (int k = 0; k < max_detection_time; k++)
+		for (int k = 0; k <= max_detection_time; k++)
 		{
 			if (!c.current_estimate.exists(k) ){
 				c.new_nodes.insert(k,c.poses_[k].pose);
