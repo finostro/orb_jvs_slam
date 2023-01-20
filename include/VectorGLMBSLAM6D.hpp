@@ -102,6 +102,7 @@
 #include <gtsam/slam/StereoFactor.h>
 
 #include <gtsam/nonlinear/ISAM2.h>
+#include <gtsam/slam/dataset.h>
 
 
 #ifdef _PERFTOOLS_CPU
@@ -278,8 +279,10 @@ void print_map(const MapType & m)
 			Eigen::Matrix3d stereoInfo_;		   /** information for stereo uvu edges */
 			Eigen::Matrix<double, 6, 6> odomInfo_; /** information for odometry edges */
 
+
 			gtsam::noiseModel::Diagonal::shared_ptr odom_noise; /** covariance of odometry*/
-			gtsam::noiseModel::Isotropic::shared_ptr stereo_noise; /** covariance of stereo measurements*/
+			
+			gtsam::noiseModel::Robust::shared_ptr stereo_noise; /** covariance of stereo measurements*/
 
 
 			std::string finalStateFile_;
@@ -919,7 +922,6 @@ void print_map(const MapType & m)
 				c.landmarks_[it->right - c.landmarks_[0].id].is_detected.insert(k);
 			}
 		}
-		updateGraph(c);
 
 		checkDA(c);
 
@@ -1408,7 +1410,9 @@ void print_map(const MapType & m)
 			std::cerr << "could not load stereo info matrix \n";
 			exit(1);
 		}
-		config.stereo_noise = gtsam::noiseModel::Isotropic::Sigma(3, 1/config.stereoInfo_(0,0) );
+		config.stereo_noise = gtsam::noiseModel::Robust::Create(  gtsam::noiseModel::mEstimator::Huber::Create(7.5), gtsam::noiseModel::Isotropic::Sigma(3, 1/config.stereoInfo_(0,0) ));
+
+		
 
 		double focal_length = node["camera.focal_length"].as<double>();
 
@@ -1931,10 +1935,8 @@ void print_map(const MapType & m)
 			#ifdef _OPENMP
 			threadnum = omp_get_thread_num();
 			#endif
-			checkGraph(c);
-			updateGraph(c);
+
 			moveBirth(c);
-			checkGraph(c);
 
 
 
@@ -1949,10 +1951,7 @@ void print_map(const MapType & m)
 
 			updateMetaStates(c);
 
-			checkGraph(c);
 			updateFoV(c);
-			checkNumDet(c);
-			checkGraph(c);
 
 			if (!c.reverted_)
 				updateDAProbs(c, minpose_, maxpose_);
@@ -1993,6 +1992,7 @@ void print_map(const MapType & m)
 						break;
 
 					case 2:
+						 expectedChange += sampleLMBirth(c);
 						 //expectedChange += mergeLM(c);
 						break;
 					}
@@ -2000,10 +2000,17 @@ void print_map(const MapType & m)
 
 					checkGraph(c);
 					updateGraph(c);
-					moveBirth(c);
 					checkGraph(c);
 
+					try{
 					c.isam_result = c.isam.update(c.new_edges, c.new_nodes, c.removed_edges);
+					}catch(const std::exception& e){
+						 std::cout << e.what();
+						 std::cout << "caught exception saving graph to graph.isam \n";
+						 gtsam::writeG2o 	( c.isam.getFactorsUnsafe() ,c.isam.calculateEstimate(), "graph.isam"	);
+						 c.isam.getFactorsUnsafe().saveGraph("graph.dot");
+						 assert(0);
+					}
 					c.current_estimate = c.isam.calculateEstimate();
 					loadEstimate(c);
 
@@ -2055,13 +2062,15 @@ void print_map(const MapType & m)
 
 
 
-			checkGraph(c);
 			updateGraph(c);
-			moveBirth(c);
 			checkGraph(c);
 
 
 			c.isam_result = c.isam.update(c.new_edges, c.new_nodes, c.removed_edges);
+			for(int isam_i = 0; isam_i < config.numLevenbergIterations_; isam_i++){
+				c.isam.update();
+			}
+			
 			c.current_estimate = c.isam.calculateEstimate();
 			loadEstimate(c);
 			moveBirth(c);
@@ -2311,37 +2320,74 @@ void print_map(const MapType & m)
 		{
 			max_detection_time--;
 		}
-
+		for (int k = 1; k < max_detection_time; k++)
+		{
+			if (c.odometry_indices[k-1] < 0){
+				c.new_edges.push_back(c.odometries_[k]);
+			}
+		}
 
 
 		for (int k = 0; k < max_detection_time; k++)
 		{
+			// odometries
+			
+
+
 			for (auto iter = c.DA_bimap_[k].left.begin(), iend = c.DA_bimap_[k].left.end(); iter != iend;
 			 ++iter)
 			{
 			
 				if (c.poses_[k].Z_[iter->first]){
 					if (c.poses_[k].Z_[iter->first]->key2() == iter->second){
+						// measurement found , it should have an index
+
+						std::array<int , 3> association = {k , iter->first , iter->second };
+
+						auto it_index_left  = c.landmark_edge_indices.left.find(association);
+						auto found_index = it_index_left->second;
+						assert(it_index_left !=c.landmark_edge_indices.left.end() );
 						
 					}else{
+
 						
 						c.poses_[k].Z_[iter->first] = boost::make_shared<StereoMeasurementEdge>(
 							c.poses_[k].stereo_points[iter->first], config.stereo_noise, k, iter->second , config.cam_params);
 						c.new_edges.push_back(c.poses_[k].Z_[iter->first]);
+
+						//measurement not found , it should not have an index
+						std::array<int , 3> association = {k , iter->first , iter->second };
+
+						auto it_index_left  = c.landmark_edge_indices.left.find(association);
+						auto found_index = it_index_left->second;
+						assert(it_index_left ==c.landmark_edge_indices.left.end() );
 						
 					}
 				}else{
-					c.poses_[k].Z_[iter->first] = boost::make_shared<StereoMeasurementEdge>(
-						c.poses_[k].stereo_points[iter->first], config.stereo_noise, k, iter->second , config.cam_params);
-					c.new_edges.push_back(c.poses_[k].Z_[iter->first]);
+
+
+					//measurement not found , it should not have an index
+					std::array<int , 3> association = {k , iter->first , iter->second };
+
+					auto it_index_left  = c.landmark_edge_indices.left.find(association);
+					auto found_index = it_index_left->second;
+					if (it_index_left != c.landmark_edge_indices.left.end()){
+						c.poses_[k].Z_[iter->first] = boost::dynamic_pointer_cast<StereoMeasurementEdge>(c.isam.getFactorsUnsafe()[found_index] );
+					}else{
+						c.poses_[k].Z_[iter->first] = boost::make_shared<StereoMeasurementEdge>(
+							c.poses_[k].stereo_points[iter->first], config.stereo_noise, k, iter->second , config.cam_params);
+						c.new_edges.push_back(c.poses_[k].Z_[iter->first]);
+
+					}
 					
+
 				}
 				
 
 			}
 		}
 
-		for (auto it: c.landmark_edge_indices){
+		for (auto it: c.landmark_edge_indices.left){
 			
 			int k = it.first[0];
 			int nz = it.first[1];
@@ -2958,7 +3004,7 @@ void print_map(const MapType & m)
 					{ // if a change has to be made and new DA is false alarm, we need to remove the association
 						c.DA_bimap_[k].right.erase(it);
 						lm.numDetections_--;
-						lm.is_detected.insert(k);
+						lm.is_detected.erase(k);
 						assert(lm.numDetections_ == lm.is_detected.size() );
 						assert(lm.numDetections_ >= 0);
 					}
@@ -3415,6 +3461,12 @@ void print_map(const MapType & m)
 					int lmidx = c.poses_[k].fov_[lmFovIdx];
 					auto &lm = c.landmarks_[lmidx - c.landmarks_[0].id];
 
+					auto point_in_camera_frame = c.poses_[k].pose.transformTo(lm.position);
+					if (point_in_camera_frame[2]<0 ){
+
+						break;
+					}
+
 					gtsam::StereoPoint2 predictedZ = c.camera.project(c.poses_[k].pose.transformTo(lm.position));
 
 					for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
@@ -3543,6 +3595,9 @@ void print_map(const MapType & m)
 	}
 	void VectorGLMBSLAM6D::loadEstimate(VectorGLMBComponent6D &c)
 	{
+
+
+
 		for (auto it:c.current_estimate){
 			if (it.key  < c.poses_.size()){
 				c.poses_[it.key].pose =  it.value.cast<PoseType>();
@@ -3550,8 +3605,20 @@ void print_map(const MapType & m)
 				c.landmarks_[it.key-c.landmarks_[0].id].position = it.value.cast<PointType>();
 			}
 		}
+
+
+		for (auto index: c.removed_edges){
+			auto result = c.landmark_edge_indices.right.erase(index);
+			assert(result);
+		}
+		c.removed_edges.clear();
+
 		auto indices = c.isam_result.getNewFactorsIndices() ;
 		for(int i = 0 ; i < indices.size() ;  i++){
+			if (c.new_edges.at(i)->keys().size() == 1){
+				// this is the prior
+				continue;
+			}
 			auto k0 = c.new_edges.at(i)->keys()[0];
 			auto k1 = c.new_edges.at(i)->keys()[1];
 			if (k1 < c.poses_.size()){
@@ -3561,12 +3628,24 @@ void print_map(const MapType & m)
 			}else{
 				auto it = c.DA_bimap_[k0].right.find(k1);
 				assert(it != c.DA_bimap_[k0].right.end());
+				
 
 				std::array<int , 3> association = {k0 , it->second , k1 };
 
-				c.landmark_edge_indices.insert(std::make_pair(association , indices[i]));
+				auto it_index_left  = c.landmark_edge_indices.left.find(association);
+				auto found_index = it_index_left->second;
+				auto it_index_right  = c.landmark_edge_indices.right.find(indices[i]);
+				auto found_association = it_index_right->second;
+
+				assert( it_index_right == c.landmark_edge_indices.right.end() );
+				assert( it_index_left == c.landmark_edge_indices.left.end() );
+
+				auto result = c.landmark_edge_indices.insert({association , indices[i]});
+				
+				assert(result.second);
 			}
 		}
+		
 	}
 
 

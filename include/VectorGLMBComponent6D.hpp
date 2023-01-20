@@ -110,7 +110,7 @@ struct VectorGLMBComponent6D {
 	std::vector<OrbslamMapPoint> landmarks_;
 	std::vector<double> landmarksResetProb_, landmarksInitProb_;
 
-	std::map<std::array<int , 3>, int > landmark_edge_indices;
+	boost::bimap<std::array<int , 3>, int > landmark_edge_indices;
 
 	double logweight_ = -std::numeric_limits<double>::infinity(),
 			prevLogWeight_ = -std::numeric_limits<double>::infinity();
