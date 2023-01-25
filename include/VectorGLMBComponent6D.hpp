@@ -86,7 +86,7 @@ struct VectorGLMBComponent6D {
  	gtsam::NonlinearFactorGraph graph, new_edges;
 	gtsam::FactorIndices removed_edges;
 	gtsam::Values current_estimate, new_nodes;
-	gtsam::ISAM2 isam;
+	boost::shared_ptr<gtsam::ISAM2> isam;
 	gtsam::ISAM2Result isam_result;
 
 	PoseType initial_pose;
@@ -145,9 +145,8 @@ struct VectorGLMBComponent6D {
 
 	}
 
-	VectorGLMBComponent6D(gtsam::Cal3_S2Stereo::shared_ptr stereo_calibration, gtsam::ISAM2Params isam2_params):
-	camera( PoseType(), stereo_calibration),
-	isam(isam2_params){
+	VectorGLMBComponent6D(gtsam::Cal3_S2Stereo::shared_ptr stereo_calibration ):
+	camera( PoseType(), stereo_calibration){
 		
 	}
 

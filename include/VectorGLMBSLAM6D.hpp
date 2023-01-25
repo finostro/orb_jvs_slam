@@ -145,7 +145,7 @@ namespace rfs
 	struct EstimateWeight{
 		double weight;
 		std::vector<StampedPose> trajectory;
-		std::set<int, PointType> map;
+		gtsam::Values estimate;
 
     void loadTUM(std::string filename, gtsam::Pose3 base_link_to_cam0_se3, double initstamp){
 		std::ifstream file;
@@ -464,6 +464,12 @@ void print_map(const MapType & m)
 		void updateMetaStates(VectorGLMBComponent6D &c);
 
 		/**
+		 * rebuild isam2 from scratch.
+		 * @param c the GLMB component
+		 */
+		void rebuildIsam(VectorGLMBComponent6D &c);
+
+		/**
 		 * Use the probabilities calculated using updateDAProbs to sample a new data association through gibbs sampling
 		 * @param c the GLMB component
 		 */
@@ -731,10 +737,10 @@ void print_map(const MapType & m)
 			auto &lm=c.landmarks_[i];
 			if (c.landmarks_[i].numDetections_ > 0)
 			{
-
-				map_cloud->at(nmap).x = c.landmarks_[i].position[0];
-				map_cloud->at(nmap).y = c.landmarks_[i].position[1];
-				map_cloud->at(nmap).z = c.landmarks_[i].position[2];
+				auto pos =  c.poses_[0].pose.transformFrom( c.landmarks_[i].position );
+				map_cloud->at(nmap).x = pos[0];
+				map_cloud->at(nmap).y = pos[1];
+				map_cloud->at(nmap).z = pos[2];
 				
 				map_cloud->at(nmap).intensity = c.landmarks_[i].numDetections_ / (float)c.landmarks_[i].numFoV_;
 
@@ -979,7 +985,10 @@ void print_map(const MapType & m)
 					//assert (dist<0.1);
 				}
 			}
+			
 			components_[i].logweight_ = it->second.weight;
+
+			// components_[i].current_estimate = it->second.estimate;
 
 			// std::cout  << "sample w: " << it->second << " j " << j  << " r " << r <<" prob "  << probs[j]<< "\n";
 
@@ -1385,8 +1394,11 @@ void print_map(const MapType & m)
 		config.isam2_parameters.relinearizeSkip = node["relinearizeSkip"].as<int>();
 		config.isam2_parameters.cacheLinearizedFactors = node["cacheLinearizedFactors"].as<bool>();
 		config.isam2_parameters.enableDetailedResults = node["enableDetailedResults"].as<bool>();
-		config.isam2_parameters.evaluateNonlinearError = true;
+		config.isam2_parameters.evaluateNonlinearError = false;
 		config.isam2_parameters.findUnusedFactorSlots = true; 
+		config.isam2_parameters.factorization = gtsam::ISAM2Params::Factorization::CHOLESKY ;
+		config.isam2_parameters.enablePartialRelinearizationCheck = node["enablePartialRelinearizationCheck"].as<bool>();
+
 
 		if (!YAML::convert<Eigen::Matrix3d>::decode(node["anchorInfo"],
 													config.anchorInfo_))
@@ -1400,9 +1412,9 @@ void print_map(const MapType & m)
 			std::cerr << "could not load odom info matrix \n";
 			exit(1);
 		}
-		config.odom_noise = gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector6(1/config.odomInfo_(0,0),
-		 1/config.odomInfo_(1,1), 1/config.odomInfo_(2,2), 1/config.odomInfo_(3,3), 
-		 1/config.odomInfo_(4,4), 1/config.odomInfo_(5,5) ));
+		config.odom_noise = gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector6(1/sqrt(config.odomInfo_(0,0)),
+		 1/sqrt(config.odomInfo_(1,1)), 1/sqrt(config.odomInfo_(2,2)), 1/sqrt(config.odomInfo_(3,3)), 
+		 1/sqrt(config.odomInfo_(4,4)), 1/sqrt(config.odomInfo_(5,5)) ));
 
 		if (!YAML::convert<Eigen::Matrix3d>::decode(node["stereoInfo"],
 													config.stereoInfo_))
@@ -1410,7 +1422,7 @@ void print_map(const MapType & m)
 			std::cerr << "could not load stereo info matrix \n";
 			exit(1);
 		}
-		config.stereo_noise = gtsam::noiseModel::Robust::Create(  gtsam::noiseModel::mEstimator::Huber::Create(7.5), gtsam::noiseModel::Isotropic::Sigma(3, 1/config.stereoInfo_(0,0) ));
+		config.stereo_noise = gtsam::noiseModel::Robust::Create(  gtsam::noiseModel::mEstimator::Huber::Create(4), gtsam::noiseModel::Isotropic::Sigma(3, 1/sqrt(config.stereoInfo_(0,0)) ));
 
 		
 
@@ -1597,7 +1609,7 @@ void print_map(const MapType & m)
 	{
 		components_.reserve(config.numComponents_);
 		for (int i=0; i< config.numComponents_ ;i++){
-			components_.emplace_back(config.cam_params, config.isam2_parameters);
+			components_.emplace_back(config.cam_params);
 
 			init(components_[i]);
 			constructGraph(components_[i]);
@@ -1628,7 +1640,7 @@ void print_map(const MapType & m)
 				maxpose_ = components_[0].poses_.size();
 
 			if (maxpose_ > maxpose_prev_ && maxpose_>20){
-				if (visited_.size() < 20) maxpose_ = maxpose_prev_;
+				if (visited_.size() < 10) maxpose_ = maxpose_prev_;
 			}
 
 			
@@ -1673,28 +1685,41 @@ void print_map(const MapType & m)
 		{
 			max_detection_time--;
 		}
+		gtsam::Pose3 displacement;
 
 		if (max_detection_time>0){
-			auto displacement = c.poses_[max_detection_time-1].pose.inverse()*c.poses_[max_detection_time].pose;
+			displacement = c.poses_[max_detection_time-1].pose.transformPoseTo(c.poses_[max_detection_time].pose);
+			displacement = gtsam::Pose3( displacement.rotation().normalized() , displacement.translation() );
+			
 			auto current_pose = c.poses_[max_detection_time].pose;
 
+			// std::cout << "displacement  :  " << displacement << "\n";
+			// std::cout << "scale  :  " << displacement.rotation().toQuaternion().norm() << "\n";
+			// std::cout << "last  :  " << c.poses_[max_detection_time].pose << "\n";
+			// std::cout << "scale  :  " << c.poses_[max_detection_time].pose.rotation().toQuaternion().norm() << "\n";
+			// std::cout << "prev  :  " << c.poses_[max_detection_time-1].pose << "\n";
+			// std::cout << "scale  :  " << c.poses_[max_detection_time-1].pose.rotation().toQuaternion().norm() << "\n";
+			// std::cout << "max_detection_time  :  " << max_detection_time  << "\n";
+
 			for(int k = max_detection_time+1 ; k < c.poses_.size() ; k++){
-				current_pose = current_pose*displacement;
+				current_pose = current_pose.transformPoseFrom(displacement);
+				current_pose = gtsam::Pose3( current_pose.rotation().normalized() , current_pose.translation());
 				
 				c.poses_[k].pose = current_pose;
 
 			}
 		}
 
+		double dist = displacement.translation().norm();
+
 		for(int k = startk ; k < c.poses_.size() ; k++){
 			int numdet = c.DA_bimap_[k].size();
-			if (numdet > 10) continue;
+			// if (numdet > 10) continue;
 			double d = uni_dist(randomGenerators_[threadnum]);
 
 
 			
 
-			double dist = (c.poses_[k].pose.translation()-c.poses_[k-1].pose.translation()).norm();
 
 			gtsam::Point3 translation_noise(gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans
 			, gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans  
@@ -1734,8 +1759,8 @@ void print_map(const MapType & m)
 
 			updateGraph(c);
 
-			c.isam_result = c.isam.update(c.new_edges, c.new_nodes, c.removed_edges);
-			c.current_estimate = c.isam.calculateEstimate();
+			c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
+			c.current_estimate = c.isam->calculateEstimate();
 			loadEstimate(c);
 
 
@@ -1913,6 +1938,7 @@ void print_map(const MapType & m)
 	{
 
 		std::cout << "visited  " << visited_.size() << "\n";
+		// if (iteration_ % 15 == 0)
 		if (visited_.size() > 0)
 		{
 			sampleComponents();
@@ -1929,7 +1955,9 @@ void print_map(const MapType & m)
 			
 			auto &c = components_[i];
 
-
+			// if (iteration_ % 15 == 0){
+			// 	rebuildIsam(c);
+			// }
 
 			int threadnum = 0;
 			#ifdef _OPENMP
@@ -2003,15 +2031,15 @@ void print_map(const MapType & m)
 					checkGraph(c);
 
 					try{
-					c.isam_result = c.isam.update(c.new_edges, c.new_nodes, c.removed_edges);
+					c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
 					}catch(const std::exception& e){
 						 std::cout << e.what();
 						 std::cout << "caught exception saving graph to graph.isam \n";
-						 gtsam::writeG2o 	( c.isam.getFactorsUnsafe() ,c.isam.calculateEstimate(), "graph.isam"	);
-						 c.isam.getFactorsUnsafe().saveGraph("graph.dot");
+						 gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateEstimate(), "graph.isam"	);
+						 c.isam->getFactorsUnsafe().saveGraph("graph.dot");
 						 assert(0);
 					}
-					c.current_estimate = c.isam.calculateEstimate();
+					c.current_estimate = c.isam->calculateEstimate();
 					loadEstimate(c);
 
 					moveBirth(c);
@@ -2066,12 +2094,12 @@ void print_map(const MapType & m)
 			checkGraph(c);
 
 
-			c.isam_result = c.isam.update(c.new_edges, c.new_nodes, c.removed_edges);
+			c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
 			for(int isam_i = 0; isam_i < config.numLevenbergIterations_; isam_i++){
-				c.isam.update();
+				c.isam->update();
 			}
 			
-			c.current_estimate = c.isam.calculateEstimate();
+			c.current_estimate = c.isam->calculateEstimate();
 			loadEstimate(c);
 			moveBirth(c);
 			updateMetaStates(c);
@@ -2082,6 +2110,7 @@ void print_map(const MapType & m)
 			EstimateWeight to_insert;
 			to_insert.weight = c.logweight_;
 			to_insert.trajectory.resize(c.poses_.size() );
+			//to_insert.estimate = c.current_estimate;
 			int max_detection_time_ = std::max(maxpose_ - 1, 0);
 			while (max_detection_time_ > 0 && c.DA_bimap_[max_detection_time_].size() == 0)
 			{
@@ -2102,7 +2131,6 @@ void print_map(const MapType & m)
 				if (dist>0.1){
 					std::cout << termcolor::red << "dist to high setting w to -inf"  << "\n";
 					std::cout << "loglikelihood " << c.odometries_[numpose-1]->error(c.current_estimate) << "\n";
-					std::cout << "globalchi2 " << c.isam_result.getErrorAfter() << "\n";
 					std::cout << "dist " << dist << "\n" << termcolor::reset ;
 				
 					c.logweight_ = -std::numeric_limits<double>::infinity();
@@ -2135,20 +2163,26 @@ void print_map(const MapType & m)
 				{
 					bestWeight_ = c.logweight_;
 					best_DA_ = c.DA_bimap_;
-					std::stringstream filename;
+					std::stringstream filename_g2o, filename_dot;
 
 					best_DA_max_detection_time_ = std::max(maxpose_ - 1, 0);
 					while (best_DA_max_detection_time_ > 0 && best_DA_[best_DA_max_detection_time_].size() == 0)
 					{
 						best_DA_max_detection_time_--;
 					}
-					// filename << config.resultFolder << "/video/beststate_" << std::setfill('0')
-					// 		 << std::setw(5) << iterationBest_++ << ".g2o";
+					filename_g2o << config.resultFolder << "/video/beststate_" << std::setfill('0')
+							 << std::setw(5) << iterationBest_++ << ".g2o";
+
+					filename_dot << config.resultFolder << "/video/beststate_" << std::setfill('0')
+							 << std::setw(5) << iterationBest_++ << ".dot";
 					// c.optimizer_->save(filename.str().c_str(), 0);
 					// std::cout << termcolor::yellow << "========== newbest:"
 					// 		  << bestWeight_ << " ============\n"
 					// 		  << termcolor::reset;
-					std::cout << "globalchi2 " << c.isam_result.getErrorAfter() << "\n";
+
+					gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateEstimate(), filename_g2o.str()	);
+					c.isam->getFactorsUnsafe().saveGraph(filename_dot.str() );
+					// std::cout << "globalchi2 " << c.isam_result.getErrorAfter() << "\n";
 					std::cout <<"  determinant not implemented: " << 0.0 << "\n";
 
 					std::stringstream name;
@@ -2162,7 +2196,7 @@ void print_map(const MapType & m)
 						std::cout << termcolor::yellow << "========== piblishingmarkers:"
 								  << bestWeight_ << " ============\n"
 								  << termcolor::reset;
-						perturbTraj(c);
+						// perturbTraj(c);
 						publishMarkers(c);
 					}
 
@@ -2293,7 +2327,7 @@ void print_map(const MapType & m)
 			}
 		}
 		logw += lm_exist_w;
-		double chi_logw=- (c.isam_result.getErrorAfter());
+		double chi_logw=- c.isam->getFactorsUnsafe().error(c.current_estimate);
 		double det_logw = 0.0 ;// DET NOT IMPLEMENTED -0.5* c.linearSolver_->_determinant;
 
 		logw += chi_logw+det_logw;
@@ -2328,7 +2362,7 @@ void print_map(const MapType & m)
 		}
 
 
-		for (int k = 0; k < max_detection_time; k++)
+		for (int k = 0; k <= max_detection_time; k++)
 		{
 			// odometries
 			
@@ -2372,7 +2406,7 @@ void print_map(const MapType & m)
 					auto it_index_left  = c.landmark_edge_indices.left.find(association);
 					auto found_index = it_index_left->second;
 					if (it_index_left != c.landmark_edge_indices.left.end()){
-						c.poses_[k].Z_[iter->first] = boost::dynamic_pointer_cast<StereoMeasurementEdge>(c.isam.getFactorsUnsafe()[found_index] );
+						c.poses_[k].Z_[iter->first] = boost::dynamic_pointer_cast<StereoMeasurementEdge>(c.isam->getFactorsUnsafe()[found_index] );
 					}else{
 						c.poses_[k].Z_[iter->first] = boost::make_shared<StereoMeasurementEdge>(
 							c.poses_[k].stereo_points[iter->first], config.stereo_noise, k, iter->second , config.cam_params);
@@ -2399,7 +2433,12 @@ void print_map(const MapType & m)
 				c.removed_edges.push_back(it.second);
 			}else{
 				if(bimap_it->second != lmid){
-					c.poses_[k].Z_[nz] = NULL; 
+					if (c.poses_[k].Z_[nz]->keys()[1] == lmid){
+						c.poses_[k].Z_[nz] = NULL; 
+
+					}else{
+						assert(c.poses_[k].Z_[nz]->keys()[1] == bimap_it->second);
+					}
 					c.removed_edges.push_back(it.second);
 				}
 			}
@@ -2628,13 +2667,13 @@ void print_map(const MapType & m)
 
 				expectedWeightChange += config.logExistenceOdds;
 				
-				 std::cout << termcolor::green << "LANDMARK BORN "
-				 << termcolor::reset << " initprob: "
-				 << c.landmarksInitProb_[i] << " numDet "
-				 << c.landmarks_[i].numDetections_ << " nd: "
-				 << numdet << " numfov: "
-				 << c.landmarks_[i].numFoV_ << "  expectedChange "
-				 << expectedWeightChange << "\n";
+				//  std::cout << termcolor::green << "LANDMARK BORN "
+				//  << termcolor::reset << " initprob: "
+				//  << c.landmarksInitProb_[i] << " numDet "
+				//  << c.landmarks_[i].numDetections_ << " nd: "
+				//  << numdet << " numfov: "
+				//  << c.landmarks_[i].numFoV_ << "  expectedChange "
+				//  << expectedWeightChange << "\n";
 				 
 
 				//c.landmarks_[i].numDetections_ = 0;
@@ -2812,11 +2851,11 @@ void print_map(const MapType & m)
 				expectedWeightChange +=-config.logExistenceOdds;
 				expectedWeightChange += -std::log(1 - config.PD_) * c.landmarks_[i].numFoV_;
 				
-				 std::cout << termcolor::red << "KILL LANDMARK\n" << termcolor::reset
-				 << c.landmarksResetProb_[i] << " n "
-				 << c.landmarks_[i].numDetections_ << " nfov:"
-				 << c.landmarks_[i].numFoV_ << "  expectedChange "
-				 << expectedWeightChange << "\n";
+				//  std::cout << termcolor::red << "KILL LANDMARK\n" << termcolor::reset
+				//  << c.landmarksResetProb_[i] << " n "
+				//  << c.landmarks_[i].numDetections_ << " nfov:"
+				//  << c.landmarks_[i].numFoV_ << "  expectedChange "
+				//  << expectedWeightChange << "\n";
 				 
 
 				c.landmarks_[i].numDetections_ = 0;
@@ -3259,6 +3298,30 @@ void print_map(const MapType & m)
 
 		checkNumDet(c);
 		return expectedWeightChange;
+	}
+
+	inline void VectorGLMBSLAM6D::rebuildIsam(VectorGLMBComponent6D &c){
+		c.isam = boost::make_shared<gtsam::ISAM2>(config.isam2_parameters);
+		c.landmark_edge_indices.clear();
+		c.removed_edges.clear();
+		c.odometry_indices.clear();
+		for (auto &pose: c.poses_){
+			for (auto &z : pose.Z_){
+				z.reset();
+			}
+		}
+		updateGraph(c);
+
+		c.new_edges.push_back(c.odometries_[0]);
+		c.new_edges.addPrior(0 , c.initial_pose , config.odom_noise );
+
+		
+
+		c.isam_result = c.isam->update(c.new_edges, c.current_estimate, c.removed_edges);
+		c.current_estimate = c.isam->calculateEstimate();
+		loadEstimate(c);
+
+
 	}
 	inline void VectorGLMBSLAM6D::updateMetaStates(VectorGLMBComponent6D &c)
 	{
@@ -3780,8 +3843,8 @@ void print_map(const MapType & m)
 		c.new_nodes.insert(0,c.poses_[0].pose);
 		c.new_nodes.insert(1,c.poses_[1].pose);
 
-		c.isam_result = c.isam.update(c.new_edges, c.new_nodes, c.removed_edges);
-		c.current_estimate = c.isam.calculateEstimate();
+		c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
+		c.current_estimate = c.isam->calculateEstimate();
 		loadEstimate(c);
 
 
@@ -3814,6 +3877,7 @@ void print_map(const MapType & m)
 	inline void VectorGLMBSLAM6D::init(VectorGLMBComponent6D &c)
 	{
 		temp_ = config.initTemp_;
+		c.isam = boost::make_shared<gtsam::ISAM2>(config.isam2_parameters);
 
 	}
 

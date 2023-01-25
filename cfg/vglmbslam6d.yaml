@@ -4,28 +4,28 @@ MeasurementLikelihoodThreshold:  100.0
 lmExistenceProb: 0.01
 
 minframe: 0
-maxframe: 200
+maxframe: 20000
 staticframes: 0
 
 PE: 1e-10
 logExistenceOdds: -200
-PD: 0.8
-numIterations: 200
+PD: 0.9
+numIterations: 2000
 numGibbs: 50
 numLandmarks: 100
-numComponents: 16
+numComponents: 3
 maxRange: 5
-numLevenbergIterations: 3
+numLevenbergIterations: 2
 tempFactor: 0.995
 initTemp: 10
 birthDeathNumIter: 1
 crossoverNumIter: 13300
 numPosesToOptimize: 30
 
-maxWeightDifference: 1e+5
+maxWeightDifference: 1e+4
 
-perturbTrans: 0.2
-perturbRot: 0.001
+perturbTrans: 0.6
+perturbRot: 0.02
 
 
 finalStateFile: optimizedState.g2o
@@ -50,10 +50,10 @@ odomInfo:
 stereoInfo:
     rows: 3
     cols: 3
-    data: [1. , 0.0 , 0.0 ,
-    0.0 , 1.0 , 0.0 ,
-    0.0 , 0.0 , 1.0 ]
-logKappa: -270 #-(540+60*60)
+    data: [0.5 , 0.0 , 0.0 ,
+    0.0 , .50 , 0.0 ,
+    0.0 , 0.0 , .50 ]
+logKappa: -160 #-(540+60*60)
 
 viewingCosLimit: 0.5
 use_gui: true
@@ -63,10 +63,11 @@ eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V201.txt
 stereo_init_max_depth: 60.0
 
 #isam2 params
-relinearizeThreshold : 0.01
+relinearizeThreshold : 0.05
 relinearizeSkip : 1
 cacheLinearizedFactors : false
-enableDetailedResults : true
+enableDetailedResults : false
+enablePartialRelinearizationCheck : true
 
 base_link_to_cam0:
   cols: 4
