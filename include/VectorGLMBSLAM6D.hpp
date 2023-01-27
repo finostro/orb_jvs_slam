@@ -1760,7 +1760,7 @@ void print_map(const MapType & m)
 			updateGraph(c);
 
 			c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
-			c.current_estimate = c.isam->calculateEstimate();
+			c.current_estimate = c.isam->calculateBestEstimate();
 			loadEstimate(c);
 
 
@@ -2035,11 +2035,11 @@ void print_map(const MapType & m)
 					}catch(const std::exception& e){
 						 std::cout << e.what();
 						 std::cout << "caught exception saving graph to graph.isam \n";
-						 gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateEstimate(), "graph.isam"	);
+						 gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateBestEstimate(), "graph.isam"	);
 						 c.isam->getFactorsUnsafe().saveGraph("graph.dot");
 						 assert(0);
 					}
-					c.current_estimate = c.isam->calculateEstimate();
+					c.current_estimate = c.isam->calculateBestEstimate();
 					loadEstimate(c);
 
 					moveBirth(c);
@@ -2099,7 +2099,7 @@ void print_map(const MapType & m)
 				c.isam->update();
 			}
 			
-			c.current_estimate = c.isam->calculateEstimate();
+			c.current_estimate = c.isam->calculateBestEstimate();
 			loadEstimate(c);
 			moveBirth(c);
 			updateMetaStates(c);
@@ -2180,7 +2180,7 @@ void print_map(const MapType & m)
 					// 		  << bestWeight_ << " ============\n"
 					// 		  << termcolor::reset;
 
-					gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateEstimate(), filename_g2o.str()	);
+					gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.current_estimate, filename_g2o.str()	);
 					c.isam->getFactorsUnsafe().saveGraph(filename_dot.str() );
 					// std::cout << "globalchi2 " << c.isam_result.getErrorAfter() << "\n";
 					std::cout <<"  determinant not implemented: " << 0.0 << "\n";
@@ -3318,7 +3318,7 @@ void print_map(const MapType & m)
 		
 
 		c.isam_result = c.isam->update(c.new_edges, c.current_estimate, c.removed_edges);
-		c.current_estimate = c.isam->calculateEstimate();
+		c.current_estimate = c.isam->calculateBestEstimate();
 		loadEstimate(c);
 
 
@@ -3386,9 +3386,9 @@ void print_map(const MapType & m)
 
 					}
 					avg_depth = avg_depth/map_point.numDetections_;
-					map_point.mfMaxDistance = std::max( 1.2*avg_depth , 1.1*max_depth);
+					map_point.mfMaxDistance = std::max( 1.8*avg_depth , 1.3*max_depth);
 					//assert(map_point.mfMaxDistance<10.0);
-					map_point.mfMinDistance = std::min(map_point.mfMaxDistance / c.poses_[0].mvScaleFactors[ c.poses_[0].mnScaleLevels - 1] * 0.8 , 0.9*min_depth);
+					map_point.mfMinDistance = std::min(map_point.mfMaxDistance / c.poses_[0].mvScaleFactors[ c.poses_[0].mnScaleLevels - 1] * 0.4 , 0.6*min_depth);
 
 					assert(max_depth < map_point.mfMaxDistance);
 					assert(min_depth > map_point.mfMinDistance);
@@ -3420,9 +3420,9 @@ void print_map(const MapType & m)
 						assert(0);
 					}
 
-					// if (max_dist <=200){
-					// 	map_point.descriptor = newDesc;
-					// }
+					if (max_dist <=200){
+						map_point.descriptor = newDesc;
+					}
 					map_point.normalVector.normalize();
 
 
@@ -3635,8 +3635,8 @@ void print_map(const MapType & m)
 			return false;
 		}
 
-		lm.mfMaxDistance = pose.point_camera_frame[numMatch].norm() * pose.mvScaleFactors[level] * 1.2;
-		lm.mfMinDistance = lm.mfMaxDistance / pose.mvScaleFactors[nLevels - 1] * 0.8;
+		lm.mfMaxDistance = pose.point_camera_frame[numMatch].norm() * pose.mvScaleFactors[level] * 1.8;
+		lm.mfMinDistance = lm.mfMaxDistance / pose.mvScaleFactors[nLevels - 1] * 0.3;
 		pose.initial_lm_id[numMatch] = newId;
 		//pose.Z_[numMatch]->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(lm.pPoint));
 
@@ -3844,7 +3844,7 @@ void print_map(const MapType & m)
 		c.new_nodes.insert(1,c.poses_[1].pose);
 
 		c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
-		c.current_estimate = c.isam->calculateEstimate();
+		c.current_estimate = c.isam->calculateBestEstimate();
 		loadEstimate(c);
 
 

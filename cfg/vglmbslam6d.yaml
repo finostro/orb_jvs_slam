@@ -13,7 +13,7 @@ PD: 0.9
 numIterations: 2000
 numGibbs: 50
 numLandmarks: 100
-numComponents: 3
+numComponents: 2
 maxRange: 5
 numLevenbergIterations: 2
 tempFactor: 0.995
@@ -24,7 +24,7 @@ numPosesToOptimize: 30
 
 maxWeightDifference: 1e+4
 
-perturbTrans: 0.6
+perturbTrans: 0.5
 perturbRot: 0.02
 
 
@@ -50,9 +50,9 @@ odomInfo:
 stereoInfo:
     rows: 3
     cols: 3
-    data: [0.5 , 0.0 , 0.0 ,
-    0.0 , .50 , 0.0 ,
-    0.0 , 0.0 , .50 ]
+    data: [0.3 , 0.0 , 0.0 ,
+    0.0 , .30 , 0.0 ,
+    0.0 , 0.0 , .30 ]
 logKappa: -160 #-(540+60*60)
 
 viewingCosLimit: 0.5
@@ -65,7 +65,7 @@ stereo_init_max_depth: 60.0
 #isam2 params
 relinearizeThreshold : 0.05
 relinearizeSkip : 1
-cacheLinearizedFactors : false
+cacheLinearizedFactors : true
 enableDetailedResults : false
 enablePartialRelinearizationCheck : true
 
