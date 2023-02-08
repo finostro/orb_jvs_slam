@@ -486,7 +486,7 @@ void print_map(const MapType & m)
 		 * Merge two data associations into a third one, by selecting a random merge time.
 		 */	
 		VectorGLMBComponent6D::BimapType sexyTime(
-			VectorGLMBComponent6D::BimapType &map1, VectorGLMBComponent6D::BimapType &map2);
+			const VectorGLMBComponent6D::BimapType &map1, const VectorGLMBComponent6D::BimapType &map2);
 
 		/**
 		 * Use the probabilities calculated in sampleDA to reset all the detections of a single landmark to all false alarms.
@@ -937,7 +937,7 @@ void print_map(const MapType & m)
 
 		// do logsumexp on the components to calculate probabilities
 
-		std::map<double, int> probs_to_index;
+		std::map<double, std::map<rfs::VectorGLMBComponent6D::BimapType, rfs::EstimateWeight>::iterator > probs_to_iterator;
 		std::vector<double> probs(visited_.size(), 0);
 		double maxw = -std::numeric_limits<double>::infinity();
 		for (auto it = visited_.begin(), it_end = visited_.end(); it != it_end;
@@ -948,7 +948,7 @@ void print_map(const MapType & m)
 		}
 		int i = 1;
 		probs[0] = std::exp((visited_.begin()->second.weight - maxw) / temp_);
-		probs_to_index.insert({std::exp((visited_.begin()->second.weight - maxw) / temp_) , 0});
+		probs_to_iterator.insert({std::exp((visited_.begin()->second.weight - maxw) / temp_) , visited_.begin()});
 		for (auto it = std::next(visited_.begin()), it_end = visited_.end();
 			 it != it_end; i++, it++)
 		{
@@ -956,7 +956,7 @@ void print_map(const MapType & m)
 				maxw = it->second.weight;
 			probs[i] = probs[i - 1] + std::exp((it->second.weight - maxw) / temp_);
 
-			probs_to_index.insert({probs[i] , i});
+			probs_to_iterator.insert({probs[i] , it});
 		}
 		/*
 		 std:: cout << "maxw " << maxw <<  "  temp " << temp_ << "\n";
@@ -967,22 +967,21 @@ void print_map(const MapType & m)
 		boost::uniform_real<> dist(0.0,
 								   probs[probs.size() - 1] );
 
-		double r = dist(randomGenerators_[0]);
+		double r1 = dist(randomGenerators_[0]);
+		double r2 = dist(randomGenerators_[0]);
 		int j = 0;
 		auto it = visited_.begin();
 		for (int i = 0; i < components_.size(); i++)
 		{
-			while (probs[j] < r)
-			{
-				j++;
-				it++;
-			}
+			auto  da1 = probs_to_iterator.lower_bound(r1)->second;
+			auto  da2 = probs_to_iterator.lower_bound(r2)->second;
 
+			auto da = sexyTime(da1->first , da2->first);
 			// add data association j to component i
-			changeDA(components_[i], it->first);
+			changeDA(components_[i], da);
 			for(int numpose = 0 ; numpose < components_[i].poses_.size() ; numpose++){
 
-				components_[i].poses_[numpose].pose = it->second.trajectory[numpose].pose;	
+				components_[i].poses_[numpose].pose = da1->second.trajectory[numpose].pose;	
 
 				if (numpose>0){
 					double dist = (it->second.trajectory[numpose].pose.translation()-it->second.trajectory[numpose-1].pose.translation()).norm();
@@ -990,13 +989,13 @@ void print_map(const MapType & m)
 				}
 			}
 			
-			components_[i].logweight_ = it->second.weight;
 
 			// components_[i].current_estimate = it->second.estimate;
 
 			// std::cout  << "sample w: " << it->second << " j " << j  << " r " << r <<" prob "  << probs[j]<< "\n";
 
-			r += probs[probs.size() - 1] / components_.size();
+			r1 += probs[probs.size() - 1] / components_.size();
+			r2 += probs[probs.size() - 1] / components_.size();
 		}
 	}
 
@@ -1911,7 +1910,7 @@ void print_map(const MapType & m)
 	}
 
 	VectorGLMBComponent6D::BimapType VectorGLMBSLAM6D::sexyTime(
-		VectorGLMBComponent6D::BimapType &map1, VectorGLMBComponent6D::BimapType &map2)
+		const VectorGLMBComponent6D::BimapType &map1, const VectorGLMBComponent6D::BimapType &map2)
 	{
 
 		int threadnum = 0;
@@ -1974,14 +1973,6 @@ void print_map(const MapType & m)
 
 
 		
-			boost::uniform_int<> random_component(0, components_.size()-1);
-			int secondComp;
-			do{
-				secondComp = random_component(rfs::randomGenerators_[threadnum]);
-			}while(secondComp==i);
-
-			auto randomda = sexyTime(c.DA_bimap_ , components_[secondComp].DA_bimap_);
-			changeDA(c,randomda);
 
 
 			moveBirth(c);
