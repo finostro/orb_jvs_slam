@@ -486,7 +486,7 @@ void print_map(const MapType & m)
 		 * Merge two data associations into a third one, by selecting a random merge time.
 		 */	
 		VectorGLMBComponent6D::BimapType sexyTime(
-			VectorGLMBComponent6D::BimapType &c1, VectorGLMBComponent6D::BimapType &c2);
+			VectorGLMBComponent6D::BimapType &map1, VectorGLMBComponent6D::BimapType &map2);
 
 		/**
 		 * Use the probabilities calculated in sampleDA to reset all the detections of a single landmark to all false alarms.
@@ -1911,7 +1911,7 @@ void print_map(const MapType & m)
 	}
 
 	VectorGLMBComponent6D::BimapType VectorGLMBSLAM6D::sexyTime(
-		VectorGLMBComponent6D::BimapType &c1, VectorGLMBComponent6D::BimapType &c2)
+		VectorGLMBComponent6D::BimapType &map1, VectorGLMBComponent6D::BimapType &map2)
 	{
 
 		int threadnum = 0;
@@ -1921,23 +1921,23 @@ void print_map(const MapType & m)
 		if (maxpose_ == 0)
 		{
 			std::vector<boost::bimap<int, int, boost::container::allocator<int>>> out(
-				c1.DA_bimap_);
+				map1);
 			return out;
 		}
 		boost::uniform_int<> random_merge_point(minpose_, maxpose_-1);
 		std::vector<boost::bimap<int, int, boost::container::allocator<int>>> out;
-		out.resize(c1.DA_bimap_.size());
+		out.resize(map1.size());
 		int merge_point = random_merge_point(rfs::randomGenerators_[threadnum]);
 
 
 		// first half from da1 second from da2
-		for (int i = merge_point; i < c2.DA_bimap_.size(); i++)
+		for (int i = merge_point; i < map2.size(); i++)
 		{
-			out[i] = c2.DA_bimap_[i];
+			out[i] = map2[i];
 		}
 		for (int i = 0; i < merge_point; i++)
 		{
-			out[i] = c1.DA_bimap_[i];
+			out[i] = map1[i];
 		}
 
 		return out;
@@ -1977,10 +1977,10 @@ void print_map(const MapType & m)
 			boost::uniform_int<> random_component(0, components_.size()-1);
 			int secondComp;
 			do{
-			secondComp=random_component(rfs::randomGenerators_[threadnum]);
+				secondComp = random_component(rfs::randomGenerators_[threadnum]);
 			}while(secondComp==i);
 
-			auto randomda = sexyTime(c,components_[secondComp]);
+			auto randomda = sexyTime(c.DA_bimap_ , components_[secondComp].DA_bimap_);
 			changeDA(c,randomda);
 
 
