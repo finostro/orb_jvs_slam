@@ -10,21 +10,22 @@ staticframes: 0
 PE: 1e-10
 logExistenceOdds: -200
 PD: 0.9
-numIterations: 2000
-numGibbs: 50
+numIterations: 2200
+numGibbs: 20
 numLandmarks: 100
-numComponents: 2
+numComponents: 4
+
 maxRange: 5
 numLevenbergIterations: 2
 tempFactor: 0.995
 initTemp: 10
-birthDeathNumIter: 1
+birthDeathNumIter: 2
 crossoverNumIter: 13300
-numPosesToOptimize: 30
+numPosesToOptimize: 15
 
 maxWeightDifference: 1e+4
 
-perturbTrans: 0.5
+perturbTrans: 0.3
 perturbRot: 0.02
 
 
@@ -41,21 +42,21 @@ anchorInfo:
 odomInfo:
     rows: 6
     cols: 6
-    data: [1000 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 1000 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 1000 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 5000 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 0.0 , 5000 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 5000 ]
+    data: [100 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 100 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 100 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 500 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 0.0 , 500 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 500 ]
 stereoInfo:
     rows: 3
     cols: 3
     data: [0.3 , 0.0 , 0.0 ,
     0.0 , .30 , 0.0 ,
     0.0 , 0.0 , .30 ]
-logKappa: -160 #-(540+60*60)
+logKappa: -170 #-(540+60*60)
 
-viewingCosLimit: 0.5
+viewingCosLimit: 0.4
 use_gui: true
 resultFolder: /home/finostro/euroc_results/V2_01_easy
 eurocFolder: /home/finostro/euroc_dataset/V2_01_easy
@@ -63,11 +64,11 @@ eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V201.txt
 stereo_init_max_depth: 60.0
 
 #isam2 params
-relinearizeThreshold : 0.05
+relinearizeThreshold : 0.02
 relinearizeSkip : 1
 cacheLinearizedFactors : true
 enableDetailedResults : false
-enablePartialRelinearizationCheck : true
+enablePartialRelinearizationCheck : false
 
 base_link_to_cam0:
   cols: 4

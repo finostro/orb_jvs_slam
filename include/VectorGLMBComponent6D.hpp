@@ -80,6 +80,7 @@ struct VectorGLMBComponent6D {
 	typedef gtsam::Pose3 PoseType;
 	typedef gtsam::GenericStereoFactor<gtsam::Pose3,gtsam::Point3> StereoMeasurementEdge;
 	typedef gtsam::BetweenFactor<gtsam::Pose3> OdometryEdge;
+	typedef std::vector<boost::bimap<int, int, boost::container::allocator<int>>>  BimapType;
 
 
 
@@ -95,8 +96,7 @@ struct VectorGLMBComponent6D {
 	gtsam::StereoCamera camera;
 
 
-	std::vector<boost::bimap<int, int, boost::container::allocator<int>>>
-			DA_bimap_, prevDA_bimap_; /**< Bimap containing data association hypothesis at time k  */
+	BimapType DA_bimap_, prevDA_bimap_; /**< Bimap containing data association hypothesis at time k  */
 
 	std::vector<std::vector<AssociationProbabilities> > DAProbs_; /**< DAProbs_ [k][nz] are is the association probabilities of measurement
 	 nz at time k, used for switching using gibbs sampling*/

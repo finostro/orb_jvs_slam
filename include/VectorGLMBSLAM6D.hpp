@@ -484,9 +484,9 @@ void print_map(const MapType & m)
 
 		/**
 		 * Merge two data associations into a third one, by selecting a random merge time.
-		 */
-		std::vector<boost::bimap<int, int, boost::container::allocator<int>>> sexyTime(
-			VectorGLMBComponent6D &c1, VectorGLMBComponent6D &c2);
+		 */	
+		VectorGLMBComponent6D::BimapType sexyTime(
+			VectorGLMBComponent6D::BimapType &c1, VectorGLMBComponent6D::BimapType &c2);
 
 		/**
 		 * Use the probabilities calculated in sampleDA to reset all the detections of a single landmark to all false alarms.
@@ -937,6 +937,7 @@ void print_map(const MapType & m)
 
 		// do logsumexp on the components to calculate probabilities
 
+		std::map<double, int> probs_to_index;
 		std::vector<double> probs(visited_.size(), 0);
 		double maxw = -std::numeric_limits<double>::infinity();
 		for (auto it = visited_.begin(), it_end = visited_.end(); it != it_end;
@@ -947,12 +948,15 @@ void print_map(const MapType & m)
 		}
 		int i = 1;
 		probs[0] = std::exp((visited_.begin()->second.weight - maxw) / temp_);
+		probs_to_index.insert({std::exp((visited_.begin()->second.weight - maxw) / temp_) , 0});
 		for (auto it = std::next(visited_.begin()), it_end = visited_.end();
 			 it != it_end; i++, it++)
 		{
 			if (it->second.weight > maxw)
 				maxw = it->second.weight;
 			probs[i] = probs[i - 1] + std::exp((it->second.weight - maxw) / temp_);
+
+			probs_to_index.insert({probs[i] , i});
 		}
 		/*
 		 std:: cout << "maxw " << maxw <<  "  temp " << temp_ << "\n";
@@ -961,7 +965,7 @@ void print_map(const MapType & m)
 		 std::cout <<"\n";*/
 
 		boost::uniform_real<> dist(0.0,
-								   probs[probs.size() - 1] / components_.size());
+								   probs[probs.size() - 1] );
 
 		double r = dist(randomGenerators_[0]);
 		int j = 0;
@@ -1701,7 +1705,7 @@ void print_map(const MapType & m)
 			// std::cout << "scale  :  " << c.poses_[max_detection_time-1].pose.rotation().toQuaternion().norm() << "\n";
 			// std::cout << "max_detection_time  :  " << max_detection_time  << "\n";
 
-			for(int k = max_detection_time+1 ; k < c.poses_.size() ; k++){
+			for(int k = max_detection_time+1 ; k < maxpose_ ; k++){
 				current_pose = current_pose.transformPoseFrom(displacement);
 				current_pose = gtsam::Pose3( current_pose.rotation().normalized() , current_pose.translation());
 				
@@ -1710,11 +1714,16 @@ void print_map(const MapType & m)
 			}
 		}
 
+		displacement = c.poses_[startk].pose.transformPoseTo(c.poses_[startk+1].pose);
+		displacement = gtsam::Pose3( displacement.rotation().normalized() , displacement.translation() );
+			
+
+
 		double dist = displacement.translation().norm();
 
-		for(int k = startk ; k < c.poses_.size() ; k++){
+		for(int k = startk ; k < maxpose_ ; k++){
 			int numdet = c.DA_bimap_[k].size();
-			// if (numdet > 10) continue;
+			
 			double d = uni_dist(randomGenerators_[threadnum]);
 
 
@@ -1732,7 +1741,19 @@ void print_map(const MapType & m)
 
 
 
-			c.poses_[k].pose = c.poses_[k].pose * noise;
+			if( k < c.poses_.size()-1 ){
+				displacement = c.poses_[k].pose.transformPoseTo(c.poses_[k+1].pose);
+				displacement = gtsam::Pose3( displacement.rotation().normalized() , displacement.translation() );
+				dist = displacement.translation().norm();
+			}	
+			if (numdet > 10) {
+				c.poses_[k].pose = c.poses_[k].pose  * noise;
+
+			}else{
+				c.poses_[k].pose = c.poses_[k-1].pose * displacement * noise;
+
+			}
+
 
 		}
 
@@ -1889,8 +1910,8 @@ void print_map(const MapType & m)
 		}
 	}
 
-	std::vector<boost::bimap<int, int, boost::container::allocator<int>>> VectorGLMBSLAM6D::sexyTime(
-		VectorGLMBComponent6D &c1, VectorGLMBComponent6D &c2)
+	VectorGLMBComponent6D::BimapType VectorGLMBSLAM6D::sexyTime(
+		VectorGLMBComponent6D::BimapType &c1, VectorGLMBComponent6D::BimapType &c2)
 	{
 
 		int threadnum = 0;
@@ -1903,35 +1924,22 @@ void print_map(const MapType & m)
 				c1.DA_bimap_);
 			return out;
 		}
-		boost::uniform_int<> random_merge_point(-maxpose_, maxpose_);
+		boost::uniform_int<> random_merge_point(minpose_, maxpose_-1);
 		std::vector<boost::bimap<int, int, boost::container::allocator<int>>> out;
 		out.resize(c1.DA_bimap_.size());
 		int merge_point = random_merge_point(rfs::randomGenerators_[threadnum]);
 
-		if (merge_point >= 0)
+
+		// first half from da1 second from da2
+		for (int i = merge_point; i < c2.DA_bimap_.size(); i++)
 		{
-			// first half from da1 second from da2
-			for (int i = merge_point; i < c2.DA_bimap_.size(); i++)
-			{
-				out[i] = c2.DA_bimap_[i];
-			}
-			for (int i = 0; i < merge_point; i++)
-			{
-				out[i] = c1.DA_bimap_[i];
-			}
+			out[i] = c2.DA_bimap_[i];
 		}
-		else
+		for (int i = 0; i < merge_point; i++)
 		{
-			// first half from da2 second from da1
-			for (int i = 0; i < -merge_point; i++)
-			{
-				out[i] = c2.DA_bimap_[i];
-			}
-			for (int i = -merge_point; i < c2.DA_bimap_.size(); i++)
-			{
-				out[i] = c1.DA_bimap_[i];
-			}
+			out[i] = c1.DA_bimap_[i];
 		}
+
 		return out;
 	}
 	inline void VectorGLMBSLAM6D::optimize(int ni)
@@ -1963,6 +1971,18 @@ void print_map(const MapType & m)
 			#ifdef _OPENMP
 			threadnum = omp_get_thread_num();
 			#endif
+
+
+		
+			boost::uniform_int<> random_component(0, components_.size()-1);
+			int secondComp;
+			do{
+			secondComp=random_component(rfs::randomGenerators_[threadnum]);
+			}while(secondComp==i);
+
+			auto randomda = sexyTime(c,components_[secondComp]);
+			changeDA(c,randomda);
+
 
 			moveBirth(c);
 
@@ -1996,15 +2016,7 @@ void print_map(const MapType & m)
 				 //selectNN(c);
 				// checkGraph(c);
 				expectedChange += sampleDA(c);
-				/*
-				 std::cout << termcolor::magenta <<" =========== SexyTime!============\n" << termcolor::reset;
-				 boost::uniform_int<> random_component(0, components_.size()-1);
-				 int secondComp;
-				 do{
-				 secondComp=random_component(rfs::randomGenerators_[threadnum]);
-				 }while(secondComp==i);
-				 sexyTime(c,components_[secondComp]);
-				 */
+
 
 				if (iteration_ % config.birthDeathNumIter_ == 0)
 				{
@@ -2196,7 +2208,7 @@ void print_map(const MapType & m)
 						std::cout << termcolor::yellow << "========== piblishingmarkers:"
 								  << bestWeight_ << " ============\n"
 								  << termcolor::reset;
-						// perturbTraj(c);
+						perturbTraj(c);
 						publishMarkers(c);
 					}
 
@@ -2209,6 +2221,7 @@ void print_map(const MapType & m)
 					}
 
 				}
+
 			}
 
 		}
@@ -3796,7 +3809,7 @@ void print_map(const MapType & m)
 				initStereoEdge(c.poses_[k], nz);
 				cam_unproject(c.poses_[k].stereo_points[nz], c.poses_[k].point_camera_frame[nz]);
 		
-				if (k%15==0){
+				if (k%7==0){
 					if (initMapPoint(c.poses_[k], nz, lm, edgeid))
 					{
 						edgeid++;
