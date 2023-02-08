@@ -23,6 +23,8 @@ birthDeathNumIter: 2
 crossoverNumIter: 13300
 numPosesToOptimize: 15
 
+doCrossover: true
+
 maxWeightDifference: 1e+4
 
 perturbTrans: 0.3

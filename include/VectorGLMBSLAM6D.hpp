@@ -270,6 +270,7 @@ void print_map(const MapType & m)
 			int numLevenbergIterations_; /**< number of gibbs samples of the data association */
 			int crossoverNumIter_;
 			int numPosesToOptimize_; /**< number of poses to optimize data associations */
+			bool doCrossover; /**< do crossover when sampling*/
 
 			int lmExistenceProb_;
 			int numIterations_; /**< number of iterations of main algorithm */
@@ -976,9 +977,14 @@ void print_map(const MapType & m)
 			auto  da1 = probs_to_iterator.lower_bound(r1)->second;
 			auto  da2 = probs_to_iterator.lower_bound(r2)->second;
 
-			auto da = sexyTime(da1->first , da2->first);
-			// add data association j to component i
-			changeDA(components_[i], da);
+			if (config.doCrossover){
+				auto da = sexyTime(da1->first , da2->first);
+				// add data association j to component i
+				changeDA(components_[i], da);
+			}else{
+				changeDA(components_[i], da1->first);
+			}
+			
 			for(int numpose = 0 ; numpose < components_[i].poses_.size() ; numpose++){
 
 				components_[i].poses_[numpose].pose = da1->second.trajectory[numpose].pose;	
@@ -1390,6 +1396,7 @@ void print_map(const MapType & m)
 
 		config.crossoverNumIter_ = node["crossoverNumIter"].as<int>();
 		config.numPosesToOptimize_ = node["numPosesToOptimize"].as<int>();
+		config.doCrossover = node["doCrossover"].as<bool>();
 		config.finalStateFile_ = node["finalStateFile"].as<std::string>();
 
 
