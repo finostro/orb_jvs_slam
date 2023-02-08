@@ -994,8 +994,8 @@ void print_map(const MapType & m)
 
 			// std::cout  << "sample w: " << it->second << " j " << j  << " r " << r <<" prob "  << probs[j]<< "\n";
 
-			r1 += probs[probs.size() - 1] / components_.size();
-			r2 += probs[probs.size() - 1] / components_.size();
+			r1 = fmod(r1 + probs[probs.size() - 1] / components_.size() , probs[probs.size() - 1]);
+			r2 = fmod(r2 + probs[probs.size() - 1] / components_.size() , probs[probs.size() - 1]);
 		}
 	}
 
