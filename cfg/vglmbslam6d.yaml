@@ -8,26 +8,26 @@ maxframe: 20000
 staticframes: 0
 
 PE: 1e-10
-logExistenceOdds: -200
-PD: 0.9
-numIterations: 2200
-numGibbs: 20
+logExistenceOdds: -150
+PD: 0.7
+numIterations: 1500
+numGibbs: 50
 numLandmarks: 100
 numComponents: 4
 
 maxRange: 5
 numLevenbergIterations: 2
 tempFactor: 0.995
-initTemp: 10
-birthDeathNumIter: 2
+initTemp: 1000
+birthDeathNumIter: 1
 crossoverNumIter: 13300
-numPosesToOptimize: 15
+numPosesToOptimize: 5
 
 doCrossover: false
 
 maxWeightDifference: 1e+4
 
-perturbTrans: 0.3
+perturbTrans: 0.8
 perturbRot: 0.02
 
 
@@ -44,18 +44,18 @@ anchorInfo:
 odomInfo:
     rows: 6
     cols: 6
-    data: [100 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 100 , 0.0 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 100 , 0.0 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 500 , 0.0 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 0.0 , 500 , 0.0 ,
-    0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 500 ]
+    data: [1000 , 0.0 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 1000 , 0.0 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 1000 , 0.0 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 5000 , 0.0 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 0.0 , 5000 , 0.0 ,
+    0.0 , 0.0 , 0.0 , 0.0 , 0.0 , 5000 ]
 stereoInfo:
     rows: 3
     cols: 3
-    data: [0.3 , 0.0 , 0.0 ,
-    0.0 , .30 , 0.0 ,
-    0.0 , 0.0 , .30 ]
+    data: [0.6 , 0.0 , 0.0 ,
+    0.0 , .60 , 0.0 ,
+    0.0 , 0.0 , .60 ]
 logKappa: -170 #-(540+60*60)
 
 viewingCosLimit: 0.4
@@ -70,7 +70,7 @@ relinearizeThreshold : 0.02
 relinearizeSkip : 1
 cacheLinearizedFactors : true
 enableDetailedResults : false
-enablePartialRelinearizationCheck : false
+enablePartialRelinearizationCheck : true
 
 base_link_to_cam0:
   cols: 4

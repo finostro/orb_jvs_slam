@@ -1642,9 +1642,9 @@ void print_map(const MapType & m)
 			maxpose_prev_ = maxpose_;
 			maxpose_ = 2 + components_[0].poses_.size() * i / (numSteps * 0.95);
 
-			if (best_DA_max_detection_time_ + 10 < maxpose_)
+			if (best_DA_max_detection_time_ + 5 < maxpose_)
 			{
-				maxpose_ = best_DA_max_detection_time_ +10;// config.numPosesToOptimize_/2;
+				maxpose_ = best_DA_max_detection_time_ +5;// config.numPosesToOptimize_/2;
 			}
 			if (maxpose_ > components_[0].poses_.size())
 				maxpose_ = components_[0].poses_.size();
@@ -1736,15 +1736,6 @@ void print_map(const MapType & m)
 			
 
 
-			gtsam::Point3 translation_noise(gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans
-			, gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans  
-			, gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans);
-
-
-			gtsam::Pose3 noise(gtsam::Rot3::Rodrigues(gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot,
-			gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot,
-			gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot), translation_noise);
-
 
 
 			if( k < c.poses_.size()-1 ){
@@ -1753,10 +1744,27 @@ void print_map(const MapType & m)
 				dist = displacement.translation().norm();
 			}	
 			if (numdet > 10) {
+				gtsam::Point3 translation_noise(gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans/2
+				, gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans/2
+				, gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans/2);
+
+				gtsam::Pose3 noise(gtsam::Rot3::Rodrigues(gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot,
+				gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot,
+				gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot), translation_noise);
+
 				c.poses_[k].pose = c.poses_[k].pose  * noise;
 
 			}else{
-				c.poses_[k].pose = c.poses_[k-1].pose * displacement * noise;
+				gtsam::Point3 translation_noise(gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans
+				, gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans  
+				, gaussianGenerators_[threadnum](randomGenerators_[threadnum])*dist*config.perturbTrans);
+
+				gtsam::Pose3 noise(gtsam::Rot3::Rodrigues(gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot,
+				gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot,
+				gaussianGenerators_[threadnum](randomGenerators_[threadnum])*config.perturbRot), translation_noise);
+
+				c.poses_[k].pose = c.poses_[k].pose  * noise;
+				// c.poses_[k].pose = c.poses_[k-1].pose * displacement * noise;
 
 			}
 
