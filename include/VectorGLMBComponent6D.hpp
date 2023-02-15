@@ -86,6 +86,8 @@ struct VectorGLMBComponent6D {
 
  	gtsam::NonlinearFactorGraph graph, new_edges;
 	gtsam::FactorIndices removed_edges;
+
+
 	gtsam::Values current_estimate, new_nodes;
 	boost::shared_ptr<gtsam::ISAM2> isam;
 	gtsam::ISAM2Result isam_result;
@@ -105,7 +107,7 @@ struct VectorGLMBComponent6D {
 	std::vector<OrbslamPose> poses_;
 	std::vector<OrbslamPose*> keyposes_;
 	std::vector<OdometryEdge::shared_ptr> odometries_;
-	std::vector<int> odometry_indices;
+	boost::bimap<int , int > odometry_indices;
 	
 	std::vector<OrbslamMapPoint> landmarks_;
 	std::vector<double> landmarksResetProb_, landmarksInitProb_;

@@ -71,6 +71,8 @@ namespace rfs
         // iskeypose
 
         bool isKeypose;
+        int referenceKeypose;
+        PoseType transformFromReferenceKeypose;
         // image bounds
 
         double mnMinX;

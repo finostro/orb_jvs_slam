@@ -10,10 +10,10 @@ staticframes: 0
 PE: 1e-10
 logExistenceOdds: -150
 PD: 0.7
-numIterations: 1500
+numIterations: 500
 numGibbs: 50
 numLandmarks: 100
-numComponents: 4
+numComponents: 12
 
 maxRange: 5
 numLevenbergIterations: 2
@@ -27,7 +27,7 @@ doCrossover: false
 
 maxWeightDifference: 1e+4
 
-perturbTrans: 0.8
+perturbTrans: 0.4
 perturbRot: 0.02
 
 
@@ -71,6 +71,7 @@ relinearizeSkip : 1
 cacheLinearizedFactors : true
 enableDetailedResults : false
 enablePartialRelinearizationCheck : true
+keypose_skip: 7
 
 base_link_to_cam0:
   cols: 4

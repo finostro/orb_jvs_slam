@@ -125,6 +125,9 @@ namespace rfs
 	static const int orb_th_high = 100;
 	static constexpr int thOrbDist = (orb_th_high + orb_th_low) / 2;
 
+
+
+
 	struct bimap_less
 	{
 		bool operator()(
@@ -271,6 +274,7 @@ void print_map(const MapType & m)
 			int crossoverNumIter_;
 			int numPosesToOptimize_; /**< number of poses to optimize data associations */
 			bool doCrossover; /**< do crossover when sampling*/
+			int keypose_skip; /**< keypose is ever n frames*/
 
 			int lmExistenceProb_;
 			int numIterations_; /**< number of iterations of main algorithm */
@@ -921,6 +925,9 @@ void print_map(const MapType & m)
 		}
 		for (int k = 0 ; k < c.DA_bimap_.size() ; k++)
 		{
+			if (!c.poses_[k].isKeypose){
+				c.DA_bimap_[k].clear();
+			}
 			auto &bimap = c.DA_bimap_[k];
 			for (auto it = bimap.begin(), it_end = bimap.end(); it != it_end;
 				 it++)
@@ -1397,6 +1404,7 @@ void print_map(const MapType & m)
 		config.crossoverNumIter_ = node["crossoverNumIter"].as<int>();
 		config.numPosesToOptimize_ = node["numPosesToOptimize"].as<int>();
 		config.doCrossover = node["doCrossover"].as<bool>();
+		config.keypose_skip = node["keypose_skip"].as<int>();
 		config.finalStateFile_ = node["finalStateFile"].as<std::string>();
 
 
@@ -2051,11 +2059,14 @@ void print_map(const MapType & m)
 					try{
 					c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
 					}catch(const std::exception& e){
-						 std::cout << e.what();
+						 std::cout << termcolor::red <<  e.what();
 						 std::cout << "caught exception saving graph to graph.isam \n";
 						 gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateBestEstimate(), "graph.isam"	);
 						 c.isam->getFactorsUnsafe().saveGraph("graph.dot");
-						 assert(0);
+						 std::cout << "threadnum: "<<  threadnum << " \n";
+						 std::cout << termcolor::reset ;
+						 throw e;
+						//  rebuildIsam(c);
 					}
 					c.current_estimate = c.isam->calculateBestEstimate();
 					loadEstimate(c);
@@ -2111,13 +2122,26 @@ void print_map(const MapType & m)
 			updateGraph(c);
 			checkGraph(c);
 
-
-			c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
-			for(int isam_i = 0; isam_i < config.numLevenbergIterations_; isam_i++){
-				c.isam->update();
+			try{
+				c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
+				for(int isam_i = 0; isam_i < config.numLevenbergIterations_; isam_i++){
+					c.isam->update();
+				}
+			
+			}catch(const std::exception& e){
+					std::cout << termcolor::red <<  e.what();
+					std::cout << "caught exception saving graph to graph.isam \n";
+					gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateBestEstimate(), "graph.isam"	);
+					c.isam->getFactorsUnsafe().saveGraph("graph.dot");
+					std::cout << "threadnum: "<<  threadnum << " \n";
+					std::cout << termcolor::reset ;
+					throw e;
+					// rebuildIsam(c);
 			}
 			
 			c.current_estimate = c.isam->calculateBestEstimate();
+			
+			
 			loadEstimate(c);
 			moveBirth(c);
 			updateMetaStates(c);
@@ -2144,7 +2168,7 @@ void print_map(const MapType & m)
 			}
 			auto pair = std::make_pair(c.DA_bimap_, to_insert);
 
-			for ( int numpose =1 ; numpose < maxpose_; numpose++){
+			for ( int numpose =minpose_+1 ; numpose < maxpose_; numpose++){
 				double dist = (c.poses_[numpose].pose.translation()-c.poses_[numpose-1].pose.translation()).norm();
 				if (dist>0.1){
 					std::cout << termcolor::red << "dist to high setting w to -inf"  << "\n";
@@ -2199,7 +2223,7 @@ void print_map(const MapType & m)
 					// 		  << termcolor::reset;
 
 					gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.current_estimate, filename_g2o.str()	);
-					c.isam->getFactorsUnsafe().saveGraph(filename_dot.str() );
+					c.isam->saveGraph(filename_dot.str() );
 					// std::cout << "globalchi2 " << c.isam_result.getErrorAfter() << "\n";
 					std::cout <<"  determinant not implemented: " << 0.0 << "\n";
 
@@ -2250,6 +2274,9 @@ void print_map(const MapType & m)
 		double scale_logw=0;
 		for (int k = 0; k < c.poses_.size(); k++)
 		{
+			if(!c.poses_[k].isKeypose){
+				continue;
+			}
 			for (int nz = 0; nz < c.poses_[k].Z_.size(); nz++)
 			{
 				auto it = c.DA_bimap_[k].left.find(nz);
@@ -2366,7 +2393,38 @@ void print_map(const MapType & m)
 		
 		c.new_nodes.clear();
 		c.removed_edges.clear();
-		c.new_edges.resize(0);
+		c.new_edges.resize (0);
+
+		for ( int k = 0; k< minpose_ ; k++){
+
+			bool new_is_keypose =  (k % config.keypose_skip == 0 );
+			if (!new_is_keypose && c.poses_[k].isKeypose){
+				c.poses_[k].referenceKeypose = (k/config.keypose_skip)*config.keypose_skip;
+				c.poses_[k].transformFromReferenceKeypose = c.poses_[c.poses_[k].referenceKeypose].pose.transformPoseTo(c.poses_[k].pose);
+
+				for (auto iter = c.DA_bimap_[k].left.begin(), iend = c.DA_bimap_[k].left.end(); iter != iend;
+				++iter){
+					auto &lm = c.landmarks_[ iter->second - c.landmarks_[0].id ];
+					lm.numDetections_--;
+					lm.is_detected.erase(k);
+					if (lm.numDetections_ == 1){
+						int k_remove = * lm.is_detected.begin();
+						c.DA_bimap_[k_remove].right.erase(lm.id);
+						lm.is_detected.clear();
+						lm.numDetections_ = 0;
+					}
+					
+
+				}
+				c.DA_bimap_[k].clear();
+
+
+				
+			}
+			c.poses_[k].isKeypose = new_is_keypose;
+			
+		}
+		
 
 		int max_detection_time = maxpose_ - 1;
 		while (max_detection_time > 0 && c.DA_bimap_[max_detection_time].size() == 0)
@@ -2375,9 +2433,17 @@ void print_map(const MapType & m)
 		}
 		for (int k = 1; k <= max_detection_time; k++)
 		{
-			if (c.odometry_indices[k-1] < 0){
-				c.new_edges.push_back(c.odometries_[k-1]);
+			auto it = c.odometry_indices.left.find(k-1);
+			if(c.poses_[k-1].isKeypose && c.poses_[k].isKeypose){
+				if (it == c.odometry_indices.left.end() ){
+					c.new_edges.push_back(c.odometries_[k-1]);
+				}
+			}else{
+				if (it != c.odometry_indices.left.end() ){
+					c.removed_edges.push_back(it->second);
+				}
 			}
+			
 		}
 
 
@@ -2385,7 +2451,9 @@ void print_map(const MapType & m)
 		{
 			// odometries
 			
-
+			if (!c.poses_[k].isKeypose){
+				continue;
+			}
 
 			for (auto iter = c.DA_bimap_[k].left.begin(), iend = c.DA_bimap_[k].left.end(); iter != iend;
 			 ++iter)
@@ -2447,7 +2515,8 @@ void print_map(const MapType & m)
 			int lmid = it.first[2];
 
 			auto bimap_it = c.DA_bimap_[k].left.find(nz);
-			if (bimap_it ==  c.DA_bimap_[k].left.end()){
+
+			if (bimap_it ==  c.DA_bimap_[k].left.end() || !c.poses_[k].isKeypose ){
 				c.poses_[k].Z_[nz] = NULL; 
 				c.removed_edges.push_back(it.second);
 			}else{
@@ -2461,28 +2530,30 @@ void print_map(const MapType & m)
 					c.removed_edges.push_back(it.second);
 				}
 			}
+			
 		}
 
 
 
+		
 		
 		for (int k = 0; k <= max_detection_time; k++)
 		{
 			if (!c.current_estimate.exists(k) ){
 				c.new_nodes.insert(k,c.poses_[k].pose);
 			}
+
 			
 		}
 
 		for(auto &lm: c.landmarks_){
 			if (lm.numDetections_ > 0 ){
+				
 				if (!c.current_estimate.exists(lm.id)){
 					c.new_nodes.insert(lm.id, lm.position);
 				}
 			}
 		}
-		
-
 
 		
 
@@ -2878,6 +2949,7 @@ void print_map(const MapType & m)
 				 
 
 				c.landmarks_[i].numDetections_ = 0;
+				c.landmarks_[i].is_detected.clear();
 			}
 		}
 
@@ -3474,7 +3546,8 @@ void print_map(const MapType & m)
 			c.poses_[k].fov_.clear();
 			c.poses_[k].predicted_scales.clear();
 
-			if (c.poses_[k].Z_.size() > 0)
+
+			if ( c.poses_[k].Z_.size() > 0 && c.poses_[k].isKeypose)
 			{ // if no measurements we set FoV to empty ,
 
 				for (int lm = 0; lm < c.landmarks_.size(); lm++)
@@ -3687,11 +3760,17 @@ void print_map(const MapType & m)
 				c.landmarks_[it.key-c.landmarks_[0].id].position = it.value.cast<PointType>();
 			}
 		}
+		for (auto &pose:c.poses_){
+			if (!pose.isKeypose){
+				pose.pose = c.poses_[pose.referenceKeypose].pose.transformPoseFrom(pose.transformFromReferenceKeypose);
+			}
+		}
 
 
 		for (auto index: c.removed_edges){
-			auto result = c.landmark_edge_indices.right.erase(index);
-			assert(result);
+			auto result_lm = c.landmark_edge_indices.right.erase(index);
+			auto result_odo = c.odometry_indices.right.erase(index) ;
+			assert(result_lm || result_odo );
 		}
 		c.removed_edges.clear();
 
@@ -3705,7 +3784,8 @@ void print_map(const MapType & m)
 			auto k1 = c.new_edges.at(i)->keys()[1];
 			if (k1 < c.poses_.size()){
 				// second key is a pose , so this is odometry
-				c.odometry_indices[k0] = indices[i];
+
+				c.odometry_indices.insert( {k0 , indices[i]});
 
 			}else{
 				auto it = c.DA_bimap_[k0].right.find(k1);
@@ -3772,7 +3852,7 @@ void print_map(const MapType & m)
 			c.poses_[k].mvScaleFactors = initial_component_.poses_[k].mvScaleFactors;
 			c.poses_[k].mvLevelSigma2 = initial_component_.poses_[k].mvLevelSigma2;
 			c.poses_[k].mvInvLevelSigma2 = initial_component_.poses_[k].mvInvLevelSigma2;
-			c.poses_[k].isKeypose = false;
+			c.poses_[k].isKeypose = true;
 			c.poses_[k].mnMinX = initial_component_.poses_[k].mnMinX;
 			c.poses_[k].mnMaxX = initial_component_.poses_[k].mnMaxX;
 			c.poses_[k].mnMinY = initial_component_.poses_[k].mnMinY;
@@ -3799,7 +3879,6 @@ void print_map(const MapType & m)
 				OdometryEdge::shared_ptr odo = boost::make_shared<OdometryEdge>(k-1 , k , odometry_pose , config.odom_noise);
 
 				c.odometries_.push_back(odo);
-				c.odometry_indices.push_back(-1);
 
 			}
 

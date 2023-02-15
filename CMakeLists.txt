@@ -25,7 +25,7 @@ endif ()
 
 
 
-SET(CMAKE_BUILD_TYPE RelWithDebInfo )
+SET(CMAKE_BUILD_TYPE Debug )
 
 PROJECT(hglmbslam)
 
