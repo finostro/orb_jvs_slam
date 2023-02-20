@@ -981,29 +981,65 @@ void print_map(const MapType & m)
 		auto it = visited_.begin();
 		for (int i = 0; i < components_.size(); i++)
 		{
+			auto &c = components_[i];
 			auto  da1 = probs_to_iterator.lower_bound(r1)->second;
 			auto  da2 = probs_to_iterator.lower_bound(r2)->second;
 
 			if (config.doCrossover){
 				auto da = sexyTime(da1->first , da2->first);
 				// add data association j to component i
-				changeDA(components_[i], da);
+				changeDA(c, da);
 			}else{
-				changeDA(components_[i], da1->first);
+				changeDA(c, da1->first);
 			}
 			
-			for(int numpose = 0 ; numpose < components_[i].poses_.size() ; numpose++){
+			for(int k = 0 ; k < c.poses_.size() ; k++){
 
-				components_[i].poses_[numpose].pose = da1->second.trajectory[numpose].pose;	
+				c.poses_[k].pose = da1->second.trajectory[k].pose;	
+				if(k < minpose_){
+					bool new_is_keypose =  (k % config.keypose_skip == 0 );
+					c.poses_[k].isKeypose = new_is_keypose;
 
-				if (numpose>0){
-					double dist = (it->second.trajectory[numpose].pose.translation()-it->second.trajectory[numpose-1].pose.translation()).norm();
-					//assert (dist<0.1);
+					if (!c.poses_[k].isKeypose){
+						
+						c.poses_[k].referenceKeypose = (k / config.keypose_skip) * config.keypose_skip;
+						c.poses_[k].transformFromReferenceKeypose = c.poses_[c.poses_[k].referenceKeypose].pose.transformPoseTo(c.poses_[k].pose);
+
+						for (auto iter = c.DA_bimap_[k].left.begin(), iend = c.DA_bimap_[k].left.end(); iter != iend;
+						++iter){
+							auto &lm = c.landmarks_[ iter->second - c.landmarks_[0].id ];
+							lm.numDetections_--;
+							lm.is_detected.erase(k);
+							if (lm.numDetections_ == 1){
+								int k_remove = * lm.is_detected.begin();
+								c.DA_bimap_[k_remove].right.erase(lm.id);
+								lm.is_detected.clear();
+								lm.numDetections_ = 0;
+							}
+							
+
+						}
+						c.DA_bimap_[k].clear();
+
+
+						
+					}
+				}
+
+
+			}
+			
+
+			
+
+
+			for (auto it: it->second.estimate){
+				if (it.key  < c.poses_.size()){
+					c.poses_[it.key].pose =  it.value.cast<PoseType>();
+				}else{
+					c.landmarks_[it.key-c.landmarks_[0].id].position = it.value.cast<PointType>();
 				}
 			}
-			
-
-			// components_[i].current_estimate = it->second.estimate;
 
 			// std::cout  << "sample w: " << it->second << " j " << j  << " r " << r <<" prob "  << probs[j]<< "\n";
 
@@ -2059,14 +2095,17 @@ void print_map(const MapType & m)
 					try{
 					c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
 					}catch(const std::exception& e){
-						 std::cout << termcolor::red <<  e.what();
-						 std::cout << "caught exception saving graph to graph.isam \n";
-						 gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateBestEstimate(), "graph.isam"	);
-						 c.isam->getFactorsUnsafe().saveGraph("graph.dot");
-						 std::cout << "threadnum: "<<  threadnum << " \n";
-						 std::cout << termcolor::reset ;
-						 throw e;
-						//  rebuildIsam(c);
+						std::cout << termcolor::red <<  e.what();
+						//std::cout << "caught exception saving graph to graph.isam \n";
+						//gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateBestEstimate(), "graph.isam"	);
+						//c.isam->getFactorsUnsafe().saveGraph("graph.dot");
+						std::cout << "threadnum: "<<  threadnum << " \n";
+						std::cout << termcolor::reset ;
+						c.logweight_ = -std::numeric_limits<double>::infinity();
+						// throw e;
+						rebuildIsam(c);
+						continue;
+						
 					}
 					c.current_estimate = c.isam->calculateBestEstimate();
 					loadEstimate(c);
@@ -2131,12 +2170,15 @@ void print_map(const MapType & m)
 			}catch(const std::exception& e){
 					std::cout << termcolor::red <<  e.what();
 					std::cout << "caught exception saving graph to graph.isam \n";
-					gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateBestEstimate(), "graph.isam"	);
-					c.isam->getFactorsUnsafe().saveGraph("graph.dot");
+					//gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateBestEstimate(), "graph.isam"	);
+					//c.isam->getFactorsUnsafe().saveGraph("graph.dot");
 					std::cout << "threadnum: "<<  threadnum << " \n";
 					std::cout << termcolor::reset ;
-					throw e;
-					// rebuildIsam(c);
+					c.logweight_ = -std::numeric_limits<double>::infinity();
+					// continue;
+					// throw e;
+					rebuildIsam(c);
+					continue;
 			}
 			
 			c.current_estimate = c.isam->calculateBestEstimate();
@@ -2152,7 +2194,7 @@ void print_map(const MapType & m)
 			EstimateWeight to_insert;
 			to_insert.weight = c.logweight_;
 			to_insert.trajectory.resize(c.poses_.size() );
-			//to_insert.estimate = c.current_estimate;
+			to_insert.estimate = c.current_estimate;
 			int max_detection_time_ = std::max(maxpose_ - 1, 0);
 			while (max_detection_time_ > 0 && c.DA_bimap_[max_detection_time_].size() == 0)
 			{
@@ -2168,18 +2210,24 @@ void print_map(const MapType & m)
 			}
 			auto pair = std::make_pair(c.DA_bimap_, to_insert);
 
+
 			for ( int numpose =minpose_+1 ; numpose < maxpose_; numpose++){
 				double dist = (c.poses_[numpose].pose.translation()-c.poses_[numpose-1].pose.translation()).norm();
 				if (dist>0.1){
 					std::cout << termcolor::red << "dist to high setting w to -inf"  << "\n";
-					std::cout << "loglikelihood " << c.odometries_[numpose-1]->error(c.current_estimate) << "\n";
+					// std::cout << "loglikelihood " << c.odometries_[numpose-1]->error(c.current_estimate) << "\n";
 					std::cout << "dist " << dist << "\n" << termcolor::reset ;
 				
 					c.logweight_ = -std::numeric_limits<double>::infinity();
+					rebuildIsam(c);
+					break;
 				}
 				
 
 				//assert (dist<0.1);
+			}
+			if ( c.logweight_ == -std::numeric_limits<double>::infinity()){
+				continue;
 			}
 			
 			std::cout << termcolor::blue << "========== current:"
@@ -2238,7 +2286,7 @@ void print_map(const MapType & m)
 						std::cout << termcolor::yellow << "========== piblishingmarkers:"
 								  << bestWeight_ << " ============\n"
 								  << termcolor::reset;
-						perturbTraj(c);
+						// perturbTraj(c);
 						publishMarkers(c);
 					}
 
@@ -2333,8 +2381,8 @@ void print_map(const MapType & m)
 							// 	}
 							// }
 							std::cout << "bad descriptor likelihood   \n";
-							assert(0);
-							exit(1);
+							// assert(0);
+							// exit(1);
 						}
 
 
@@ -2395,36 +2443,7 @@ void print_map(const MapType & m)
 		c.removed_edges.clear();
 		c.new_edges.resize (0);
 
-		for ( int k = 0; k< minpose_ ; k++){
 
-			bool new_is_keypose =  (k % config.keypose_skip == 0 );
-			if (!new_is_keypose && c.poses_[k].isKeypose){
-				c.poses_[k].referenceKeypose = (k/config.keypose_skip)*config.keypose_skip;
-				c.poses_[k].transformFromReferenceKeypose = c.poses_[c.poses_[k].referenceKeypose].pose.transformPoseTo(c.poses_[k].pose);
-
-				for (auto iter = c.DA_bimap_[k].left.begin(), iend = c.DA_bimap_[k].left.end(); iter != iend;
-				++iter){
-					auto &lm = c.landmarks_[ iter->second - c.landmarks_[0].id ];
-					lm.numDetections_--;
-					lm.is_detected.erase(k);
-					if (lm.numDetections_ == 1){
-						int k_remove = * lm.is_detected.begin();
-						c.DA_bimap_[k_remove].right.erase(lm.id);
-						lm.is_detected.clear();
-						lm.numDetections_ = 0;
-					}
-					
-
-				}
-				c.DA_bimap_[k].clear();
-
-
-				
-			}
-			c.poses_[k].isKeypose = new_is_keypose;
-			
-		}
-		
 
 		int max_detection_time = maxpose_ - 1;
 		while (max_detection_time > 0 && c.DA_bimap_[max_detection_time].size() == 0)
@@ -3392,23 +3411,32 @@ void print_map(const MapType & m)
 	}
 
 	inline void VectorGLMBSLAM6D::rebuildIsam(VectorGLMBComponent6D &c){
+		//std::cout << "rebuilding isam\n";
 		c.isam = boost::make_shared<gtsam::ISAM2>(config.isam2_parameters);
 		c.landmark_edge_indices.clear();
 		c.removed_edges.clear();
 		c.odometry_indices.clear();
+		c.new_edges.resize (0);
+		c.new_nodes.clear();
+
+
 		for (auto &pose: c.poses_){
 			for (auto &z : pose.Z_){
 				z.reset();
 			}
 		}
-		updateGraph(c);
+		for (int k=0; k< c.poses_.size(); k++){
+			c.DA_bimap_[k].clear();
+		}
+		//updateGraph(c);
 
-		c.new_edges.push_back(c.odometries_[0]);
+		//c.new_edges.push_back(c.odometries_[0]);
 		c.new_edges.addPrior(0 , c.initial_pose , config.odom_noise );
+		c.new_nodes.insert(0 , c.initial_pose);
 
 		
 
-		c.isam_result = c.isam->update(c.new_edges, c.current_estimate, c.removed_edges);
+		c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
 		c.current_estimate = c.isam->calculateBestEstimate();
 		loadEstimate(c);
 
@@ -3894,7 +3922,7 @@ void print_map(const MapType & m)
 				initStereoEdge(c.poses_[k], nz);
 				cam_unproject(c.poses_[k].stereo_points[nz], c.poses_[k].point_camera_frame[nz]);
 		
-				if (k%7==0){
+				if (k%config.keypose_skip==0){
 					if (initMapPoint(c.poses_[k], nz, lm, edgeid))
 					{
 						edgeid++;

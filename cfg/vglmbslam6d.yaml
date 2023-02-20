@@ -9,8 +9,8 @@ staticframes: 0
 
 PE: 1e-10
 logExistenceOdds: -150
-PD: 0.7
-numIterations: 500
+PD: 0.6
+numIterations: 2500
 numGibbs: 50
 numLandmarks: 100
 numComponents: 12
@@ -21,13 +21,13 @@ tempFactor: 0.995
 initTemp: 1000
 birthDeathNumIter: 1
 crossoverNumIter: 13300
-numPosesToOptimize: 5
+numPosesToOptimize: 15
 
 doCrossover: false
 
-maxWeightDifference: 1e+4
+maxWeightDifference: 1e+6
 
-perturbTrans: 0.4
+perturbTrans: 0.2
 perturbRot: 0.02
 
 
@@ -53,10 +53,10 @@ odomInfo:
 stereoInfo:
     rows: 3
     cols: 3
-    data: [0.6 , 0.0 , 0.0 ,
-    0.0 , .60 , 0.0 ,
-    0.0 , 0.0 , .60 ]
-logKappa: -170 #-(540+60*60)
+    data: [1.0 , 0.0 , 0.0 ,
+    0.0 , 1.0 , 0.0 ,
+    0.0 , 0.0 , 1.0 ]
+logKappa: -130 #-(540+60*60)
 
 viewingCosLimit: 0.4
 use_gui: true
@@ -70,7 +70,7 @@ relinearizeThreshold : 0.02
 relinearizeSkip : 1
 cacheLinearizedFactors : true
 enableDetailedResults : false
-enablePartialRelinearizationCheck : true
+enablePartialRelinearizationCheck : false
 keypose_skip: 7
 
 base_link_to_cam0:
@@ -123,7 +123,7 @@ camera_params:
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-ORBextractor.nFeatures: 400
+ORBextractor.nFeatures: 800
 
 # ORB Extractor: Scale factor between levels in the scale pyramid 	
 ORBextractor.scaleFactor: 1.2
