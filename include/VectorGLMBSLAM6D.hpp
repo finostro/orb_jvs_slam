@@ -39,6 +39,7 @@
 #include <vector>
 #include <algorithm>
 #include <stdio.h>
+#include <filesystem>
 #include "ceres/ceres.h"
 #include <unordered_map>
 #include <math.h>
@@ -1490,6 +1491,10 @@ void print_map(const MapType & m)
 
 		config.eurocFolder_ = node["eurocFolder"].as<std::string>();
 		config.resultFolder = node["resultFolder"].as<std::string>();
+
+		std::filesystem::create_directory(std::filesystem::path(config.resultFolder));
+		std::filesystem::create_directory(std::filesystem::path(config.resultFolder+"/video"));
+
 		config.use_gui_ = node["use_gui"].as<bool>();
 
 		config.eurocTimestampsFilename_ = node["eurocTimestampsFilename"].as<std::string>();
@@ -2034,7 +2039,6 @@ void print_map(const MapType & m)
 		
 
 
-			moveBirth(c);
 
 
 
@@ -2213,7 +2217,7 @@ void print_map(const MapType & m)
 
 			for ( int numpose =minpose_+1 ; numpose < maxpose_; numpose++){
 				double dist = (c.poses_[numpose].pose.translation()-c.poses_[numpose-1].pose.translation()).norm();
-				if (dist>0.1){
+				if (dist>0.2){
 					std::cout << termcolor::red << "dist to high setting w to -inf"  << "\n";
 					// std::cout << "loglikelihood " << c.odometries_[numpose-1]->error(c.current_estimate) << "\n";
 					std::cout << "dist " << dist << "\n" << termcolor::reset ;

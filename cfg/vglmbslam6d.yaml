@@ -56,13 +56,13 @@ stereoInfo:
     data: [1.0 , 0.0 , 0.0 ,
     0.0 , 1.0 , 0.0 ,
     0.0 , 0.0 , 1.0 ]
-logKappa: -130 #-(540+60*60)
+logKappa: -150 #-(540+60*60)
 
 viewingCosLimit: 0.4
 use_gui: true
-resultFolder: /home/finostro/euroc_results/V2_01_easy
-eurocFolder: /home/finostro/euroc_dataset/V2_01_easy
-eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V201.txt
+resultFolder: /home/finostro/euroc_results/V2_02_medium
+eurocFolder: /home/finostro/euroc_dataset/V2_02_medium
+eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V202.txt
 stereo_init_max_depth: 60.0
 
 #isam2 params
@@ -71,7 +71,7 @@ relinearizeSkip : 1
 cacheLinearizedFactors : true
 enableDetailedResults : false
 enablePartialRelinearizationCheck : false
-keypose_skip: 7
+keypose_skip: 5
 
 base_link_to_cam0:
   cols: 4
