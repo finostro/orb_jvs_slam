@@ -4,28 +4,31 @@ MeasurementLikelihoodThreshold:  100.0
 lmExistenceProb: 0.01
 
 minframe: 0
-maxframe: 6000
+maxframe: 20000
 staticframes: 0
 
 PE: 1e-10
-logExistenceOdds: -200
-PD: 0.8
-numIterations: 2200
+logExistenceOdds: -150
+PD: 0.6
+numIterations: 2500
 numGibbs: 50
 numLandmarks: 100
-numComponents: 16
+numComponents: 12
+
 maxRange: 5
-numLevenbergIterations: 3
+numLevenbergIterations: 2
 tempFactor: 0.995
-initTemp: 10
+initTemp: 1000
 birthDeathNumIter: 1
 crossoverNumIter: 13300
-numPosesToOptimize: 30
+numPosesToOptimize: 15
 
-maxWeightDifference: 1e+5
+doCrossover: false
+
+maxWeightDifference: 1e+6
 
 perturbTrans: 0.2
-perturbRot: 0.001
+perturbRot: 0.02
 
 
 finalStateFile: optimizedState.g2o
@@ -50,17 +53,25 @@ odomInfo:
 stereoInfo:
     rows: 3
     cols: 3
-    data: [1. , 0.0 , 0.0 ,
+    data: [1.0 , 0.0 , 0.0 ,
     0.0 , 1.0 , 0.0 ,
     0.0 , 0.0 , 1.0 ]
-logKappa: -270 #-(540+60*60)
+logKappa: -150 #-(540+60*60)
 
-viewingCosLimit: 0.5
+viewingCosLimit: 0.4
 use_gui: true
-resultFolder: /home/finostro/euroc_results/V2_01_easy
-eurocFolder: /home/finostro/euroc_dataset/V2_01_easy
-eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V201.txt
+resultFolder: /home/finostro/euroc_results/V2_02_medium
+eurocFolder: /home/finostro/euroc_dataset/V2_02_medium
+eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V202.txt
 stereo_init_max_depth: 60.0
+
+#isam2 params
+relinearizeThreshold : 0.02
+relinearizeSkip : 1
+cacheLinearizedFactors : true
+enableDetailedResults : false
+enablePartialRelinearizationCheck : false
+keypose_skip: 5
 
 base_link_to_cam0:
   cols: 4
@@ -112,7 +123,7 @@ camera_params:
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-ORBextractor.nFeatures: 400
+ORBextractor.nFeatures: 800
 
 # ORB Extractor: Scale factor between levels in the scale pyramid 	
 ORBextractor.scaleFactor: 1.2

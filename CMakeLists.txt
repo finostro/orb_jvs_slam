@@ -38,9 +38,15 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   tf2_ros
 )
-#find_package(GTSAM REQUIRED)
+find_package(GTSAM REQUIRED)
 
+include_directories(${GTSAM_INCLUDE_DIR})
+set(GTSAM_LIBRARIES gtsam)   # TODO: automatic search libs
 
+find_package(GTSAMCMakeTools)
+include(GtsamMakeConfigFile)
+include(GtsamBuildTypes)
+include(GtsamTesting)
 ###################################
 ## catkin specific configuration ##
 ###################################
@@ -270,7 +276,7 @@ ADD_LIBRARY(rfsslam
   )
   
   
-TARGET_LINK_LIBRARIES(rfsslam   ${YAML_CPP_LIBRARIES}  ${Boost_LIBRARIES}  ${OpenCV_LIBS} ${Sophus_LIBRARIES} fmt::fmt  ${catkin_LIBRARIES} 
+TARGET_LINK_LIBRARIES(rfsslam   gtsam ${YAML_CPP_LIBRARIES}  ${Boost_LIBRARIES}  ${OpenCV_LIBS} ${Sophus_LIBRARIES} fmt::fmt  ${catkin_LIBRARIES} 
 ${PCL_LIBRARIES}    )
 
 
@@ -289,7 +295,7 @@ ADD_EXECUTABLE(vglmbslam6d src/vglmbslam6d_euroc.cpp  src/external/ORBextractor.
 # TARGET_LINK_LIBRARIES(vglmbslam6d  yaml-cpp  ${Boost_LIBRARIES} rfsslam ${CERES_LIBRARIES} ${CSPARSE_LIBRARY} g2o_core g2o_csparse_extension g2o_solver_csparse g2o_types_slam3d g2o_types_sba g2o_types_sim3  g2o_stuff  
 # ${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES}   )
 
-TARGET_LINK_LIBRARIES(vglmbslam6d  ${YAML_CPP_LIBRARIES} glog::glog  ${Boost_LIBRARIES} rfsslam  ${CSPARSE_LIBRARY} g2o_core_rd g2o_csparse_extension_rd g2o_solver_csparse_rd g2o_types_slam3d_rd g2o_types_sba_rd g2o_types_sim3_rd  g2o_stuff_rd  
+TARGET_LINK_LIBRARIES(vglmbslam6d   ${YAML_CPP_LIBRARIES} glog::glog  ${Boost_LIBRARIES} rfsslam  ${CSPARSE_LIBRARY}          
 ${OpenCV_LIBS} ${Sophus_LIBRARIES}  ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${Perftools_PROFILER_LIBRARY}  )
 
 
