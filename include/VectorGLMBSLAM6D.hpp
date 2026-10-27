@@ -2924,6 +2924,8 @@ void print_map(const MapType & m)
 		//c.tomerge_.clear();
 		//AssociationProbabilities probs;
 		double expectedWeightChange = 0;
+		std::vector<double> P;
+		AssociationProbabilities probs;
 		for (unsigned int k = minpose_; k < maxpose_; k++){
 			// break;
 			// std::cout  << "testk " << k  << " maxpose " << maxpose_ << "\n";
@@ -2938,14 +2940,10 @@ void print_map(const MapType & m)
 
 
 
-				
-				
-					std::vector<double> P;
-					AssociationProbabilities probs;
 
 
-
-
+					probs.i.clear();
+					probs.l.clear();
 					probs.i.push_back(-5);
 					probs.l.push_back(config.logKappa_);
 
