@@ -3563,6 +3563,20 @@ void print_map(const MapType & m)
 			map_point.predicted_scales.resize(0);
 		}
 
+		// landmarks that can enter any FoV this call, in index order (stops where the scan used to break)
+		std::vector<int> candidates;
+		for (int lm = 0; lm < c.landmarks_.size(); lm++)
+		{
+			if(c.landmarks_[lm].birthTime_ > c.poses_[maxpose_-1].stamp){
+				break;
+			}
+			if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp && c.landmarks_[lm].birthTime_ >= c.poses_[minpose_].stamp))
+				candidates.push_back(lm);
+		}
+		// lmAssocStamp[lm index] == k+1  <=>  DA_bimap_[k].right contains the landmark
+		std::vector<int> lmAssocStamp(c.landmarks_.size(), 0);
+		const int lmId0 = c.landmarks_.empty() ? 0 : c.landmarks_[0].id;
+
 		for (int k = 0; k < maxpose_; k++)
 		{
 
@@ -3572,18 +3586,13 @@ void print_map(const MapType & m)
 
 			if ( c.poses_[k].Z_.size() > 0 && c.poses_[k].isKeypose)
 			{ // if no measurements we set FoV to empty ,
+				for (auto &assoc : c.DA_bimap_[k].left)
+					lmAssocStamp[assoc.second - lmId0] = k + 1;
 
-				for (int lm = 0; lm < c.landmarks_.size(); lm++)
+				for (int lm : candidates)
 				{
-					auto it = c.DA_bimap_[k].right.find(c.landmarks_[lm].id);
-					bool associated = it != c.DA_bimap_[k].right.end();
+					bool associated = lmAssocStamp[lm] == k + 1;
 					bool isInFov = false;
-					if(c.landmarks_[lm].birthTime_ > c.poses_[maxpose_-1].stamp){
-						break;
-					}
-
-					if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp && c.landmarks_[lm].birthTime_ >= c.poses_[minpose_].stamp))
-					//if ( (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp))
 					{
 						double predScale=0;
 						if (associated || c.poses_[k].isInFrustum(&c.landmarks_[lm],
