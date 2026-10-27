@@ -3555,6 +3555,8 @@ void print_map(const MapType & m)
 												int minpose, int maxpose)
 	{
 		const double stereoGate = 50;
+		const double logPDOdds = std::log(config.PD_) - std::log(1 - config.PD_);
+		const double logGaussNorm = -0.5 * 3 * std::log(2 * M_PI); // 3 is dimension of measurement
 
 
 		for (int k =0; k< minpose;k++){
@@ -3625,8 +3627,10 @@ void print_map(const MapType & m)
 						int r1 = std::clamp(std::floor((predictedZ.v() + stereoGate - vmin) / stereoGate), -1.0, nrows - 1.0);
 						for (int r = r0; r <= r1; r++)
 							for (int col = c0; col <= c1; col++)
-								nearby.insert(nearby.end(), cells[r * ncols + col].begin(), cells[r * ncols + col].end());
-						std::sort(nearby.begin(), nearby.end());
+							{
+								auto mid = nearby.insert(nearby.end(), cells[r * ncols + col].begin(), cells[r * ncols + col].end());
+								std::inplace_merge(nearby.begin(), mid, nearby.end());
+							}
 					}
 
 					for (int nz : nearby)
@@ -3658,12 +3662,12 @@ void print_map(const MapType & m)
 						}
 						p += desclikelihood;
 
-						p += std::log(config.PD_) - std::log(1 - config.PD_);
+						p += logPDOdds;
 						
 						{ 
 							 p += -0.5 * (error_scalar*error_scalar* config.stereoInfo_(0,0)); //chi2, this assumes information is a*Identity(3,3)
 							assert(!isnan(p));
-							p += -0.5 * 3 * std::log(2 * M_PI); // 3 is dimension of measurement
+							p += logGaussNorm;
 							assert(!isnan(p));
 
 
