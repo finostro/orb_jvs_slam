@@ -73,6 +73,7 @@ find_package(yaml-cpp REQUIRED)
 find_package(fmt REQUIRED)
 find_package(glog REQUIRED)
 find_package(GTSAM 4.3 REQUIRED)
+find_package(TBB REQUIRED COMPONENTS tbbmalloc_proxy)
 find_package(OpenCV 4.4 REQUIRED)
 
 add_library(rfsslam
@@ -112,6 +113,7 @@ target_link_libraries(vglmbslam6d
     ${geometry_msgs_TARGETS}
     Boost::program_options
     ${Perftools_PROFILER_LIBRARY}
+    TBB::tbbmalloc_proxy  # replaces malloc/new process-wide; ~4% faster than glibc malloc here
 )
 
 install(TARGETS rfsslam vglmbslam6d
