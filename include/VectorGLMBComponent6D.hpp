@@ -116,6 +116,7 @@ struct VectorGLMBComponent6D {
 
 	double logweight_ = -std::numeric_limits<double>::infinity(),
 			prevLogWeight_ = -std::numeric_limits<double>::infinity();
+	double logDetH_ = 0; /**< log det of the factor-graph information matrix at the last calculateWeight */
 	int numPoses_, numPoints_;
 	bool reverted_ = false;
 	std::vector<std::pair<int, int>> tomerge_; /**< proportional to probability of merge heuristic*/

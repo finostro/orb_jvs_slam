@@ -2210,7 +2210,7 @@ void print_map(const MapType & m)
 					gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.current_estimate, filename_g2o.str()	);
 					c.isam->saveGraph(filename_dot.str() );
 					// std::cout << "globalchi2 " << c.isam_result.getErrorAfter() << "\n";
-					std::cout <<"  determinant not implemented: " << 0.0 << "\n";
+					std::cout <<"  log det H: " << c.logDetH_ << "\n";
 
 					std::stringstream name;
 					static int numbest=0;
@@ -2360,7 +2360,19 @@ void print_map(const MapType & m)
 		}
 		logw += lm_exist_w;
 		double chi_logw=- c.isam->getFactorsUnsafe().error(c.current_estimate);
-		double det_logw = 0.0 ;// DET NOT IMPLEMENTED -0.5* c.linearSolver_->_determinant;
+		// Laplace term -0.5*log det(H). The Bayes tree is whitened, so H = R^T R and
+		// log det(H) = 2 * sum over cliques of log det(R_clique).
+		double logDetR = 0;
+		std::vector<gtsam::ISAM2::sharedClique> cliques(c.isam->roots().begin(), c.isam->roots().end());
+		while (!cliques.empty())
+		{
+			auto clique = cliques.back();
+			cliques.pop_back();
+			logDetR += clique->conditional()->logDeterminant();
+			cliques.insert(cliques.end(), clique->children.begin(), clique->children.end());
+		}
+		c.logDetH_ = 2 * logDetR;
+		double det_logw = -0.5 * c.logDetH_;
 
 		logw += chi_logw+det_logw;
 		 std::cout << termcolor::blue << "weight: " <<logw << " det_logw: " <<     det_logw  
