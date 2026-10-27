@@ -3623,7 +3623,11 @@ void print_map(const MapType & m)
 		for (int k = minpose; k < maxpose; k++)
 		{
 
-			std::fill(c.reverseDAProbs_[k].begin(),c.reverseDAProbs_[k].end(), AssociationProbabilities() );
+			for (auto &probs : c.reverseDAProbs_[k])
+			{
+				probs.i.clear();
+				probs.l.clear();
+			}
 			c.reverseDAProbs_[k].resize(c.poses_[k].fov_.size());
 			c.DAProbs_[k].resize(c.poses_[k].Z_.size());
 
@@ -3631,13 +3635,13 @@ void print_map(const MapType & m)
 			{
 				c.DAProbs_[k][nz].i.clear();
 				c.DAProbs_[k][nz].l.clear();
-				c.DAProbs_[k][nz].i.reserve(c.poses_[k].fov_.size()+1);
 				c.DAProbs_[k][nz].i.push_back(-5);
 				c.DAProbs_[k][nz].l.push_back(config.logKappa_);
 			}
 
-			// Bucket measurements by (uL, v) in gate-sized cells. A pair passing the stereo gate has
-			// |duL| <= gate and |dv| <= gate, so only the cells around the prediction can contain it.
+			// Bucket measurements by (uL, v). A pair passing the stereo gate has |duL| <= gate and
+			// |dv| <= gate, so only the cells around the prediction can contain it.
+			const double cellSize = stereoGate / 2;
 			double umin = std::numeric_limits<double>::infinity(), vmin = umin;
 			double umax = -umin, vmax = -umin;
 			for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
@@ -3650,17 +3654,18 @@ void print_map(const MapType & m)
 				vmin = std::min(vmin, z.v());
 				vmax = std::max(vmax, z.v());
 			}
-			int ncols = umax >= umin ? int((umax - umin) / stereoGate) + 1 : 0;
-			int nrows = vmax >= vmin ? int((vmax - vmin) / stereoGate) + 1 : 0;
+			int ncols = umax >= umin ? int((umax - umin) / cellSize) + 1 : 0;
+			int nrows = vmax >= vmin ? int((vmax - vmin) / cellSize) + 1 : 0;
 			std::vector<std::vector<int>> cells(ncols * nrows);
+			std::vector<int> octave(c.DAProbs_[k].size());
 			for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
 			{
+				octave[nz] = c.poses_[k].keypoints_left[c.poses_[k].matches_left_to_right[nz].queryIdx].octave;
 				auto &z = c.poses_[k].stereo_points[nz];
 				if (!std::isfinite(z.uL()) || !std::isfinite(z.v()))
 					continue;
-				cells[int((z.v() - vmin) / stereoGate) * ncols + int((z.uL() - umin) / stereoGate)].push_back(nz);
+				cells[int((z.v() - vmin) / cellSize) * ncols + int((z.uL() - umin) / cellSize)].push_back(nz);
 			}
-			std::vector<int> nearby;
 
 				for(int lmFovIdx =0; lmFovIdx <c.poses_[k].fov_.size();lmFovIdx++){
 					int lmidx = c.poses_[k].fov_[lmFovIdx];
@@ -3672,34 +3677,26 @@ void print_map(const MapType & m)
 						break;
 					}
 
-					gtsam::StereoPoint2 predictedZ = c.camera.project(c.poses_[k].pose.transformTo(lm.position));
+					gtsam::StereoPoint2 predictedZ = c.camera.project(point_in_camera_frame);
+					if (!std::isfinite(predictedZ.uL()) || !std::isfinite(predictedZ.v()))
+						continue;
 
-					nearby.clear();
-					if (std::isfinite(predictedZ.uL()) && std::isfinite(predictedZ.v()))
+					int c0 = std::clamp(std::floor((predictedZ.uL() - stereoGate - umin) / cellSize), 0.0, double(ncols));
+					int c1 = std::clamp(std::floor((predictedZ.uL() + stereoGate - umin) / cellSize), -1.0, ncols - 1.0);
+					int r0 = std::clamp(std::floor((predictedZ.v() - stereoGate - vmin) / cellSize), 0.0, double(nrows));
+					int r1 = std::clamp(std::floor((predictedZ.v() + stereoGate - vmin) / cellSize), -1.0, nrows - 1.0);
+					int predictedScale = c.poses_[k].predicted_scales[lmFovIdx];
+					for (int r = r0; r <= r1; r++)
+					for (int col = c0; col <= c1; col++)
+					for (int nz : cells[r * ncols + col])
 					{
-						int c0 = std::clamp(std::floor((predictedZ.uL() - stereoGate - umin) / stereoGate), 0.0, double(ncols));
-						int c1 = std::clamp(std::floor((predictedZ.uL() + stereoGate - umin) / stereoGate), -1.0, ncols - 1.0);
-						int r0 = std::clamp(std::floor((predictedZ.v() - stereoGate - vmin) / stereoGate), 0.0, double(nrows));
-						int r1 = std::clamp(std::floor((predictedZ.v() + stereoGate - vmin) / stereoGate), -1.0, nrows - 1.0);
-						for (int r = r0; r <= r1; r++)
-							for (int col = c0; col <= c1; col++)
-							{
-								auto mid = nearby.insert(nearby.end(), cells[r * ncols + col].begin(), cells[r * ncols + col].end());
-								std::inplace_merge(nearby.begin(), mid, nearby.end());
-							}
-					}
-
-					for (int nz : nearby)
-					{
+						auto &z = c.poses_[k].stereo_points[nz];
+						if (std::abs(z.uL() - predictedZ.uL()) > stereoGate || std::abs(z.v() - predictedZ.v()) > stereoGate)
+							continue;
 
 						double p=0.0;
 
-
-
-
-
-						int predictedScale = c.poses_[k].predicted_scales[lmFovIdx];
-						int scalediff = abs(predictedScale-c.poses_[k].keypoints_left[c.poses_[k].matches_left_to_right[nz].queryIdx].octave );
+						int scalediff = abs(predictedScale-octave[nz]);
 						if(scalediff >2){
 							continue;
 						}
@@ -3742,6 +3739,15 @@ void print_map(const MapType & m)
 						// avg_desc_likelihood += desclikelihood;
 					}
 				}
+
+					// cells are visited out of nz order; restore ascending nz in the reverse list
+					auto &rev = c.reverseDAProbs_[k][lmFovIdx];
+					for (int x = 1; x < rev.i.size(); x++)
+						for (int y = x; y > 0 && rev.i[y - 1] > rev.i[y]; y--)
+						{
+							std::swap(rev.i[y - 1], rev.i[y]);
+							std::swap(rev.l[y - 1], rev.l[y]);
+						}
 
 
 
