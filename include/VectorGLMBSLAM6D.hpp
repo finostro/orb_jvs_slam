@@ -2628,6 +2628,33 @@ void print_map(const MapType & m)
 		threadnum = omp_get_thread_num();
 #endif
 
+		// Candidate (k, nz) entries of each landmark in DAProbs_, in (k, nz) order. Built on the
+		// first birth so each birth reads its own entries instead of scanning every candidate list.
+		struct BirthCandidate { int k, nz; double l, l0; };
+		std::vector<int> candidateStart;
+		std::vector<BirthCandidate> candidates;
+		auto buildCandidates = [&]() {
+			const int lmId0 = c.landmarks_[0].id;
+			candidateStart.assign(c.landmarks_.size() + 1, 0);
+			for (int k = minpose_; k < maxpose_; k++)
+				for (auto &probs : c.DAProbs_[k])
+					for (int a = 0; a < probs.i.size(); a++)
+						if (probs.i[a] >= 0)
+							candidateStart[probs.i[a] - lmId0 + 1]++;
+			for (int i = 0; i < c.landmarks_.size(); i++)
+				candidateStart[i + 1] += candidateStart[i];
+			candidates.resize(candidateStart.back());
+			std::vector<int> fill(candidateStart.begin(), candidateStart.end() - 1);
+			for (int k = minpose_; k < maxpose_; k++)
+				for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
+				{
+					auto &probs = c.DAProbs_[k][nz];
+					for (int a = 0; a < probs.i.size(); a++)
+						if (probs.i[a] >= 0)
+							candidates[fill[probs.i[a] - lmId0]++] = {k, nz, probs.l[a], probs.l[0]};
+				}
+		};
+
 		for (int i = 0; i < c.landmarks_.size(); i++)
 		{
 			auto &lm=c.landmarks_[i];
@@ -2653,31 +2680,31 @@ void print_map(const MapType & m)
 				// reset all associations to false alarms
 				expectedWeightChange += (config.logKappa_ + (1 - config.PD_)) * c.landmarks_[i].numFoV_;
 				//int numdet = 0;
-				for (int k = minpose_; k < maxpose_; k++)
+				if (candidateStart.empty())
+					buildCandidates();
+				for (int e = candidateStart[i], eEnd = candidateStart[i + 1]; e < eEnd;)
 				{
+					int k = candidates[e].k;
 					if ( k == lm.birthPose->id ){
+						while (e < eEnd && candidates[e].k == k)
+							e++;
 						continue;
 					}
 					double maxl = -std::numeric_limits<double>::infinity();
 					int max_nz = -5;
-					for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
+					for (; e < eEnd && candidates[e].k == k; e++)
 					{
+						auto &cand = candidates[e];
 						// if measurement is associated, continue
-						auto it = c.DA_bimap_[k].left.find(nz);
+						auto it = c.DA_bimap_[k].left.find(cand.nz);
 						if (it != c.DA_bimap_[k].left.end())
 						{
 							continue;
 						}
-						for (int a = 0; a < c.DAProbs_[k][nz].i.size(); a++)
+						if (cand.l > cand.l0 && cand.l > maxl)
 						{
-							if (c.DAProbs_[k][nz].i[a] == c.landmarks_[i].id)
-							{
-								if (c.DAProbs_[k][nz].l[a] > c.DAProbs_[k][nz].l[0] && c.DAProbs_[k][nz].l[a] > maxl)
-								{
-									maxl = c.DAProbs_[k][nz].l[a];
-									max_nz = nz;
-								}
-							}
+							maxl = cand.l;
+							max_nz = cand.nz;
 						}
 					}
 					if (max_nz>=0){
