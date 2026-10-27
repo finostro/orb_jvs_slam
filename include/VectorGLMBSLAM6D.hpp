@@ -2926,12 +2926,16 @@ void print_map(const MapType & m)
 		double expectedWeightChange = 0;
 		std::vector<double> P;
 		AssociationProbabilities probs;
+		std::vector<char> zAssociated; // zAssociated[nz]  <=>  DA_bimap_[k].left contains nz
 		for (unsigned int k = minpose_; k < maxpose_; k++){
 			// break;
 			// std::cout  << "testk " << k  << " maxpose " << maxpose_ << "\n";
 			if(k>=maxpose_){
 				break;
 			}
+			zAssociated.assign(c.poses_[k].Z_.size(), 0);
+			for (auto &assoc : c.DA_bimap_[k].left)
+				zAssociated[assoc.first] = 1;
 			// std::cout  << "testk " << k << "\n";
 			for(int lmFovIdx =0; lmFovIdx <c.poses_.at(k).fov_.size();lmFovIdx++){
 				int lmidx = c.poses_.at(k).fov_.at(lmFovIdx);
@@ -3006,7 +3010,7 @@ void print_map(const MapType & m)
 
 							
 						}else{
-							if (c.DA_bimap_[k].left.count(nz) == 0)
+							if (!zAssociated[nz])
 							{ // measurement is not already associated to another landmark
 								
 								probs.i.push_back(c.reverseDAProbs_[k][lmFovIdx].i[a]);
@@ -3050,12 +3054,19 @@ void print_map(const MapType & m)
 							auto result = c.DA_bimap_[k].insert({ probs.i[sample] ,  lmidx});
 
 							assert(result.second);
+							if (result.second)
+								zAssociated[probs.i[sample]] = 1;
 							assert(lm.is_detected.size() == lm.numDetections_);
 						}
 						else
 						{
 							bool result = c.DA_bimap_[k].right.replace_data(it, probs.i[sample]);
 							assert(result);
+							if (result)
+							{
+								zAssociated[prevDA] = 0;
+								zAssociated[probs.i[sample]] = 1;
+							}
 
 						}
 						if (lm.numDetections_>0 ){
@@ -3073,6 +3084,8 @@ void print_map(const MapType & m)
 									}
 									auto result = c.DA_bimap_[kbirth].insert({lm.birthMatch, lmidx });
 									assert(result.second);
+									if (result.second && kbirth == k)
+										zAssociated[lm.birthMatch] = 1;
 									lm.numDetections_++;
 									lm.is_detected.insert(kbirth);
 									assert(lm.numDetections_ == lm.is_detected.size() );
@@ -3088,6 +3101,7 @@ void print_map(const MapType & m)
 					else
 					{ // if a change has to be made and new DA is false alarm, we need to remove the association
 						c.DA_bimap_[k].right.erase(it);
+						zAssociated[prevDA] = 0;
 						lm.numDetections_--;
 						lm.is_detected.erase(k);
 						assert(lm.numDetections_ == lm.is_detected.size() );
@@ -3123,8 +3137,13 @@ void print_map(const MapType & m)
 		std::fill(c.landmarksResetProb_.begin(), c.landmarksResetProb_.end(),
 				  -config.logExistenceOdds);
 		std::fill(c.landmarksInitProb_.begin(), c.landmarksInitProb_.end(), config.logExistenceOdds);
+		// lmAssocStamp[lm index] == k+1  <=>  DA_bimap_[k].right contains the landmark
+		std::vector<int> lmAssocStamp(c.landmarks_.size(), 0);
+		const int lmId0 = c.landmarks_[0].id;
 		for (int k = minpose_; k < maxpose_; k++)
 		{
+			for (auto &assoc : c.DA_bimap_[k].left)
+				lmAssocStamp[assoc.second - lmId0] = k + 1;
 
 			for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
 			{
@@ -3192,7 +3211,7 @@ void print_map(const MapType & m)
 							// unborn landmark outside the birth window: reject before the bimap lookups
 							if (lm.numDetections_ == 0 && !(lm.birthTime_ < c.poses_[k].stamp && lm.birthTime_ > c.poses_[k].stamp - 1.0))
 								continue;
-							if (c.DA_bimap_[k].right.count(c.DAProbs_[k][nz].i[a]) == 0)
+							if (lmAssocStamp[c.DAProbs_[k][nz].i[a] - lmId0] != k + 1)
 							{ // landmark is not already associated to another measurement
 
 								if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id].numDetections_ == 0)
@@ -3292,6 +3311,8 @@ void print_map(const MapType & m)
 						{
 							auto result = c.DA_bimap_[k].insert({nz, probs.i[sample]});
 							assert(result.second);
+							if (result.second)
+								lmAssocStamp[probs.i[sample] - lmId0] = k + 1;
 						}
 						else
 						{
@@ -3302,6 +3323,11 @@ void print_map(const MapType & m)
 							assert(prev_lm.numDetections_ >= 0);
 							auto result = c.DA_bimap_[k].left.replace_data(it, probs.i[sample]);
 							assert(result);
+							if (result)
+							{
+								lmAssocStamp[selectedDA - lmId0] = 0;
+								lmAssocStamp[probs.i[sample] - lmId0] = k + 1;
+							}
 
 							// add an log for possible landmark merge
 							c.tomerge_.push_back(
@@ -3321,6 +3347,8 @@ void print_map(const MapType & m)
 									}
 									auto result = c.DA_bimap_[kbirth].insert({c.landmarks_[probs.i[sample] - c.landmarks_[0].id].birthMatch, probs.i[sample] });
 									assert(result.second);
+									if (result.second && kbirth == k)
+										lmAssocStamp[probs.i[sample] - lmId0] = k + 1;
 									lm.numDetections_++;
 									lm.is_detected.insert(kbirth);
 								}else{
@@ -3334,6 +3362,7 @@ void print_map(const MapType & m)
 					else
 					{ // if a change has to be made and new DA is false alarm, we need to remove the association
 						c.DA_bimap_[k].left.erase(it);
+						lmAssocStamp[selectedDA - lmId0] = 0;
 						c.landmarks_[selectedDA - c.landmarks_[0].id].numDetections_--;
 						c.landmarks_[selectedDA - c.landmarks_[0].id].is_detected.erase(k);
 						assert(c.landmarks_[selectedDA - c.landmarks_[0].id].numDetections_ >= 0);
