@@ -1,34 +1,30 @@
 <?xml version="1.0"?>
-<package>
+<package format="3">
   <name>hglmbslam</name>
   <version>0.0.2</version>
-  <description>
-    Node to subscribe  tf and publish a path with the tf trajectory . 
-  </description>
+  <description>Stereo visual SLAM using the Joint Vector-Set (VGLMB) formulation with ORB features.</description>
 
   <maintainer email="felipe.inostroza@amtc.uchile.cl">Felipe Inostroza</maintainer>
   <license>BSD</license>
 
+  <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <build_depend>visualization_msgs</build_depend>
-  <build_depend>navigation_msgs</build_depend>
-  <build_depend>libpcl-all-dev</build_depend>
-  <build_depend>sensor_msgs</build_depend>
-  <build_depend>roscpp</build_depend>
+  <depend>rclcpp</depend>
+  <depend>visualization_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>gtsam</depend>
+  <depend>sophus</depend>
+  <depend>eigen</depend>
+  <depend>libopencv-dev</depend>
+  <depend>yaml-cpp</depend>
+  <depend>fmt</depend>
+  <depend>libgoogle-glog-dev</depend>
+  <depend>boost</depend>
 
-
-  <buildtool_depend>catkin</buildtool_depend>
-
-
-  <run_depend>geometry_msgs</run_depend>
-  <run_depend>rospy</run_depend>
-  <run_depend>sensor_msgs</run_depend>
-  <run_depend>std_msgs</run_depend>
-  <run_depend>visualization_msgs</run_depend>
-  <run_depend>navigation_msgs</run_depend>
-  <run_depend>roscpp</run_depend>
-  <run_depend>libpcl-all</run_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
   <export>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

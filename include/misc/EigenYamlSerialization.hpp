@@ -3,6 +3,7 @@
 
 #include <Eigen/Core>
 #include <yaml-cpp/yaml.h>
+#include <glog/logging.h>
 #include <stdio.h>
 
 namespace YAML {  // This has to be in the same namespace as the Emitter.

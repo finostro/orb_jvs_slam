@@ -40,7 +40,6 @@
 #include <algorithm>
 #include <stdio.h>
 #include <filesystem>
-#include "ceres/ceres.h"
 #include <unordered_map>
 #include <math.h>
 #include "GaussianGenerators.hpp"
@@ -62,7 +61,6 @@
 #include <misc/termcolor.hpp>
 
 #include <external/ORBextractor.h>
-#include <external/Converter.h>
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -74,24 +72,8 @@
 
 #include "sophus/se3.hpp"
 
-#include <ros/ros.h>
-#include <tf2_ros/transform_broadcaster.h>
-#include <tf2_ros/static_transform_broadcaster.h>
-#include <tf2/LinearMath/Quaternion.h>
-#include <geometry_msgs/TransformStamped.h>
-
-#include <sensor_msgs/PointCloud2.h>
-#include <nav_msgs/Path.h>
-
-#include <pcl_conversions/pcl_conversions.h>
-#include <pcl/point_types.h>
-#include <pcl/PCLPointCloud2.h>
-#include <pcl/conversions.h>
-#include <pcl_ros/transforms.h>
-#include <pcl/filters/crop_box.h>
-#include <pcl/common/common.h>
-
-#include <visualization_msgs/Marker.h>
+#include <rclcpp/rclcpp.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 
 #include <gtsam/geometry/Pose3.h>
@@ -635,24 +617,20 @@ void print_map(const MapType & m)
 		std::vector<float> orbExtractorInvScaleFactors;
 		std::vector<float> orbExtractorScaleFactors;
 
-		ros::NodeHandle n;
-		ros::Publisher measurements_pub, trajectory_pub, gt_trajectory_pub, map_pub, association_pub;
+		rclcpp::Node::SharedPtr node_;
+		rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
 	};
 
 	//////////////////////////////// Implementation ////////////////////////
 
-	VectorGLMBSLAM6D::VectorGLMBSLAM6D() : n("~")
+	VectorGLMBSLAM6D::VectorGLMBSLAM6D() : node_(std::make_shared<rclcpp::Node>("hglmbslam"))
 	{
 		nThreads_ = 1;
 
 #ifdef _OPENMP
 		nThreads_ = omp_get_max_threads();
 #endif
-		measurements_pub = n.advertise<sensor_msgs::PointCloud2>("measurements", 1);
-		trajectory_pub = n.advertise<nav_msgs::Path>("est_traj", 1);
-		gt_trajectory_pub = n.advertise<nav_msgs::Path>("gt_traj", 1);
-		association_pub = n.advertise<visualization_msgs::Marker>("association", 1);
-		map_pub = n.advertise<sensor_msgs::PointCloud2>("map", 1);
+		marker_pub_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("hglmbslam/marker", 10);
 	}
 
 	VectorGLMBSLAM6D::~VectorGLMBSLAM6D()
@@ -662,203 +640,93 @@ void print_map(const MapType & m)
 	void VectorGLMBSLAM6D::publishMarkers(VectorGLMBComponent6D &c)
 	{
 
-		//print_map(c.DA_bimap_[0].left);
-		// latest pose tf
-		ros::spinOnce();
-		static tf2_ros::StaticTransformBroadcaster br;
-		ros::Time now = ros::Time::now();
-		geometry_msgs::TransformStamped transformStamped;
-
-		transformStamped.header.stamp = now;
-		transformStamped.header.frame_id = "map";
-		transformStamped.child_frame_id = "camera";
-
-		transformStamped.transform.translation.x = c.poses_[c.maxpose_-1].pose.translation()[0];
-		transformStamped.transform.translation.y = c.poses_[c.maxpose_-1].pose.translation()[1];
-		transformStamped.transform.translation.z = c.poses_[c.maxpose_-1].pose.translation()[2];
-
-		auto q = c.poses_[c.maxpose_-1].pose.rotation().toQuaternion();
-		transformStamped.transform.rotation.x = q.x();
-		transformStamped.transform.rotation.y = q.y();
-		transformStamped.transform.rotation.z = q.z();
-		transformStamped.transform.rotation.w = q.w();
-
-		br.sendTransform(transformStamped);
-
-		// measurements
-
-		// static pcl::PointCloud<pcl::PointXYZI>::Ptr z_cloud(new pcl::PointCloud<pcl::PointXYZI>);
-		// z_cloud->height = 1;
-		// z_cloud->width = c.poses_[c.maxpose_-1].point_camera_frame.size();
-		// z_cloud->is_dense = false;
-		// //z_cloud->resize(c.poses_[c.maxpose_-1].point_camera_frame.size());
-		// z_cloud->clear();
-		// for(int k = 0 ; k <c.maxpose_ ; k++){
-
-		// 	z_cloud->reserve(z_cloud->size()+c.poses_[k].point_camera_frame.size());
-		// 	for (int i = 0; i < c.poses_[k].point_camera_frame.size(); i++)
-		// 	{
-		// 		auto point_world_frame = c.poses_[k].pose.transformFrom(c.poses_[k].point_camera_frame[i]);
-				
-		// 		pcl::PointXYZI point ;
-		// 		point.x = point_world_frame[0];
-		// 		point.y = point_world_frame[1];
-		// 		point.z = point_world_frame[2];
-		// 		point.intensity = k;
-		// 		z_cloud->push_back(point);
-		// 		//std::cout << "z: " << z_cloud->at(i).x  << " , "<< z_cloud->at(i).y  << " , "<< z_cloud->at(i).z  << " \n";
-		// 	}
-		// }
-		// std::cout << "z size " << z_cloud->size() << "\n";
-		pcl::PCLPointCloud2 pcl_debug;
-		// sensor_msgs::PointCloud2 ros_debug;
-		// pcl::toPCLPointCloud2(*z_cloud, pcl_debug);
-		// pcl_conversions::fromPCL(pcl_debug, ros_debug);
-
-		// ros_debug.header.stamp = now;
-		// ros_debug.header.frame_id = "map";
-
-		// measurements_pub.publish(ros_debug);
-
-		// map
-
-		static pcl::PointCloud<pcl::PointXYZI>::Ptr map_cloud(new pcl::PointCloud<pcl::PointXYZI>);
-		map_cloud->height = 1;
-		map_cloud->is_dense = false;
-		int numlm = 0;
-		for (int i = 0; i < c.landmarks_.size(); i++)
+		auto makeMarker = [](const std::string &ns, int type, double scale, float r, float g, float b)
 		{
-			if (c.landmarks_[i].numDetections_ > 0)
+			visualization_msgs::msg::Marker m;
+			m.header.frame_id = "map";
+			m.header.stamp = rclcpp::Time(0);
+			m.ns = ns;
+			m.id = 0;
+			m.type = type;
+			m.action = visualization_msgs::msg::Marker::ADD;
+			m.pose.orientation.w = 1.0;
+			m.scale.x = scale;
+			m.scale.y = scale;
+			m.scale.z = scale;
+			m.color.a = 1.0;
+			m.color.r = r;
+			m.color.g = g;
+			m.color.b = b;
+			return m;
+		};
+		auto toPoint = [](const gtsam::Point3 &p)
+		{
+			geometry_msgs::msg::Point pt;
+			pt.x = p[0];
+			pt.y = p[1];
+			pt.z = p[2];
+			return pt;
+		};
+
+		visualization_msgs::msg::MarkerArray markers;
+
+		// current camera pose
+		auto camera = makeMarker("camera", visualization_msgs::msg::Marker::ARROW, 0.39, 1.0, 0.0, 0.0);
+		camera.scale.y = camera.scale.z = 0.039;
+		const auto &current_pose = c.poses_[c.maxpose_ - 1].pose;
+		camera.pose.position = toPoint(current_pose.translation());
+		auto q = (current_pose.rotation() * gtsam::Rot3::Ry(-M_PI / 2)).toQuaternion();
+		camera.pose.orientation.x = q.x();
+		camera.pose.orientation.y = q.y();
+		camera.pose.orientation.z = q.z();
+		camera.pose.orientation.w = q.w();
+		markers.markers.push_back(camera);
+
+		// map, colored by detection ratio
+		auto map = makeMarker("map", visualization_msgs::msg::Marker::POINTS, 0.03, 0.0, 0.0, 0.0);
+		for (auto &lm : c.landmarks_)
+		{
+			if (lm.numDetections_ > 0)
 			{
-				numlm++;
+				map.points.push_back(toPoint(c.poses_[0].pose.transformFrom(lm.position)));
+				float ratio = std::clamp(lm.numDetections_ / (float)lm.numFoV_, 0.0f, 1.0f);
+				std_msgs::msg::ColorRGBA color;
+				color.r = 1.0 - ratio;
+				color.g = ratio;
+				color.b = 0.0;
+				color.a = 1.0;
+				map.colors.push_back(color);
 			}
 		}
-		map_cloud->width = numlm;
-		map_cloud->resize(numlm);
-		std::cout << termcolor::green <<" = nlandmarks: " <<numlm << "\n" <<termcolor::reset;
-		//numlm = 0;
-		int nmap=0;
-		for (int i = 0; i < c.landmarks_.size(); i++)
+		std::cout << termcolor::green << " = nlandmarks: " << map.points.size() << "\n" << termcolor::reset;
+		markers.markers.push_back(map);
+
+		// estimated trajectory
+		auto trajectory = makeMarker("est_traj", visualization_msgs::msg::Marker::LINE_STRIP, 0.03, 1.0, 0.5, 0.0);
+		for (auto &pose : c.poses_)
+			trajectory.points.push_back(toPoint(pose.pose.translation()));
+		markers.markers.push_back(trajectory);
+
+		// ground truth trajectory
+		auto gt_trajectory = makeMarker("gt_traj", visualization_msgs::msg::Marker::LINE_STRIP, 0.03, 0.0, 1.0, 0.0);
+		for (auto &pose : gt_est.trajectory)
+			gt_trajectory.points.push_back(toPoint(pose.pose.translation()));
+		markers.markers.push_back(gt_trajectory);
+
+		// associations
+		auto associations = makeMarker("association", visualization_msgs::msg::Marker::LINE_LIST, 0.02, 0.0, 1.0, 0.0);
+		for (int k = 0; k < c.maxpose_; k++)
 		{
-			auto &lm=c.landmarks_[i];
-			if (c.landmarks_[i].numDetections_ > 0)
+			for (auto iter = c.DA_bimap_[k].left.begin(), iend = c.DA_bimap_[k].left.end(); iter != iend; ++iter)
 			{
-				auto pos =  c.poses_[0].pose.transformFrom( c.landmarks_[i].position );
-				map_cloud->at(nmap).x = pos[0];
-				map_cloud->at(nmap).y = pos[1];
-				map_cloud->at(nmap).z = pos[2];
-				
-				map_cloud->at(nmap).intensity = c.landmarks_[i].numDetections_ / (float)c.landmarks_[i].numFoV_;
-
-				// map_cloud->at(nmap).intensity = std::binary_search(lm.is_in_fov_.begin(), lm.is_in_fov_.end(), c.maxpose_-1);
-
-				nmap++;
+				associations.points.push_back(toPoint(c.landmarks_[iter->second - c.landmarks_[0].id].position));
+				associations.points.push_back(toPoint(c.poses_[k].pose.transformFrom(c.poses_[k].point_camera_frame[iter->first])));
 			}
-
-		}
-
-		sensor_msgs::PointCloud2 ros_map_cloud;
-		pcl::toPCLPointCloud2(*map_cloud, pcl_debug);
-		pcl_conversions::fromPCL(pcl_debug, ros_map_cloud);
-
-		ros_map_cloud.header.stamp = now;
-		ros_map_cloud.header.frame_id = "map";
-
-		map_pub.publish(ros_map_cloud);
-
-		// trajectory
-		nav_msgs::Path path;
-		path.header.stamp = now;
-		path.header.frame_id = "map";
-
-		path.poses.resize(c.poses_.size());
-		for (int i = 0; i < c.poses_.size(); i++)
-		{
-			path.poses[i].header.stamp = now;
-			path.poses[i].header.frame_id = "map";
-			path.poses[i].pose.position.x = c.poses_[i].pose.translation()[0];
-			path.poses[i].pose.position.y = c.poses_[i].pose.translation()[1];
-			path.poses[i].pose.position.z = c.poses_[i].pose.translation()[2];
-			auto q =  c.poses_[i].pose.rotation().toQuaternion();
-			path.poses[i].pose.orientation.x = q.x();
-			path.poses[i].pose.orientation.y = q.y();
-			path.poses[i].pose.orientation.z = q.z();
-			path.poses[i].pose.orientation.w = q.w();
-		}
-		trajectory_pub.publish(path);
-
-	// gt trajectory
-		nav_msgs::Path gtpath;
-		gtpath.header.stamp = now;
-		gtpath.header.frame_id = "map";
-
-		gtpath.poses.resize(gt_est.trajectory.size());
-		for (int i = 0; i < gt_est.trajectory.size(); i++)
-		{
-			gtpath.poses[i].header.stamp = now;
-			gtpath.poses[i].header.frame_id = "map";
-			gtpath.poses[i].pose.position.x = gt_est.trajectory[i].pose.translation()[0];
-			gtpath.poses[i].pose.position.y = gt_est.trajectory[i].pose.translation()[1];
-			gtpath.poses[i].pose.position.z = gt_est.trajectory[i].pose.translation()[2];
-			auto q =  gt_est.trajectory[i].pose.rotation().toQuaternion();
-			gtpath.poses[i].pose.orientation.x = q.x();
-			gtpath.poses[i].pose.orientation.y = q.y();
-			gtpath.poses[i].pose.orientation.z = q.z();
-			gtpath.poses[i].pose.orientation.w = q.w();
-		}
-		gt_trajectory_pub.publish(gtpath);
-
-
-		// Associations
-		visualization_msgs::Marker as_marker;
-		as_marker.header.frame_id = "map";
-		as_marker.header.stamp = ros::Time();
-		as_marker.ns = "my_namespace";
-		as_marker.id = 0;
-		as_marker.type = visualization_msgs::Marker::LINE_LIST;
-		as_marker.action = visualization_msgs::Marker::ADD;
-		as_marker.pose.position.x = 0;
-		as_marker.pose.position.y = 0;
-		as_marker.pose.position.z = 0;
-		as_marker.pose.orientation.x = 0.0;
-		as_marker.pose.orientation.y = 0.0;
-		as_marker.pose.orientation.z = 0.0;
-		as_marker.pose.orientation.w = 1.0;
-		as_marker.scale.x = 0.02;
-		as_marker.scale.y = 0.02;
-		as_marker.scale.z = 0.02;
-		as_marker.color.a = 1.0; // Don't forget to set the alpha!
-		as_marker.color.r = 0.0;
-		as_marker.color.g = 1.0;
-		as_marker.color.b = 0.0;
-		int a=0;
-
-		for(int k=0; k<c.maxpose_; k++){
-		as_marker.points.resize(as_marker.points.size()+2*c.DA_bimap_[k].size());
-
-		for (auto iter = c.DA_bimap_[k].left.begin(), iend = c.DA_bimap_[k].left.end(); iter != iend;
-			 ++iter)
-		{
-		
-
-			as_marker.points[a].x = c.landmarks_[iter->second - c.landmarks_[0].id].position[0];
-			as_marker.points[a].y = c.landmarks_[iter->second - c.landmarks_[0].id].position[1];
-			as_marker.points[a].z = c.landmarks_[iter->second - c.landmarks_[0].id].position[2];
-
-			auto point_world_frame = c.poses_[k].pose.transformFrom(c.poses_[k].point_camera_frame[iter->first]);
-
-			as_marker.points[a+1].x = point_world_frame[0];
-			as_marker.points[a+1].y = point_world_frame[1];
-			as_marker.points[a+1].z = point_world_frame[2];
-
-			a+=2;
-		}
-
 		}
 		std::cout << "n ass: " << c.DA_bimap_[c.maxpose_-1].size()  << "  nz: "  << c.poses_[c.maxpose_-1].Z_.size() << "\n";
+		markers.markers.push_back(associations);
 
-		association_pub.publish(as_marker);
-		ros::spinOnce();
+		marker_pub_->publish(markers);
 
 // show last image
 
@@ -1185,26 +1053,16 @@ void print_map(const MapType & m)
 			// }
 
 
-			// plot stereo matches
-			cv::Mat imLeftKeys, imRightKeys, imMatches;
-			cv::Scalar kpColor = cv::Scalar(255, 0, 0);
-
-			cv::drawMatches(imLeft_rect,
-							initial_component_.poses_[ni].keypoints_left, imRight_rect,
-							initial_component_.poses_[ni].keypoints_right,
-							initial_component_.poses_[ni].matches_left_to_right, imMatches);
-
-			// cv::drawKeypoints(imRight_rect,
-			// 				  initial_component_.poses_[ni].keypoints_right, imRightKeys,
-			// 				  kpColor);
-			// cv::drawKeypoints(imLeft_rect,
-			// 				  initial_component_.poses_[ni].keypoints_left, imLeftKeys,
-			// 				  kpColor);
-			  cv::imshow("matches", imMatches);
-			 //cv::imshow("imLeft", imLeft);
-			 //cv::imshow("imLeft_rect", imLeft_rect);
-
-			 cv::waitKey(1); // Wait for a keystroke in the window
+			if (config.use_gui_)
+			{
+				cv::Mat imMatches;
+				cv::drawMatches(imLeft_rect,
+								initial_component_.poses_[ni].keypoints_left, imRight_rect,
+								initial_component_.poses_[ni].keypoints_right,
+								initial_component_.poses_[ni].matches_left_to_right, imMatches);
+				cv::imshow("matches", imMatches);
+				cv::waitKey(1);
+			}
 			std::cout << ni + 1 << "/" << nImages << "                                   \r";
 		}
 		std::cout << "\n";
@@ -1567,7 +1425,7 @@ void print_map(const MapType & m)
 		Eigen::Vector2d principal_point = {config.camera_parameters_[0].cx,
 										   config.camera_parameters_[0].cy};
 
-		config.cam_params = boost::make_shared<gtsam::Cal3_S2Stereo>(config.camera_parameters_[0].fx ,
+		config.cam_params = std::make_shared<gtsam::Cal3_S2Stereo>(config.camera_parameters_[0].fx ,
 																	config.camera_parameters_[0].fy ,
 																	0 ,                                     // 0 skew
 																	config.camera_parameters_[0].cx ,
@@ -1686,7 +1544,7 @@ void print_map(const MapType & m)
 	inline void VectorGLMBSLAM6D::run(int numSteps)
 	{
 
-		for (int i = 0; i < numSteps && ros::ok(); i++)
+		for (int i = 0; i < numSteps && rclcpp::ok(); i++)
 		{
 			maxpose_prev_ = maxpose_;
 			maxpose_ = 2 + components_[0].poses_.size() * i / (numSteps * 0.95);
@@ -2495,7 +2353,7 @@ void print_map(const MapType & m)
 					}else{
 
 						
-						c.poses_[k].Z_[iter->first] = boost::make_shared<StereoMeasurementEdge>(
+						c.poses_[k].Z_[iter->first] = std::make_shared<StereoMeasurementEdge>(
 							c.poses_[k].stereo_points[iter->first], config.stereo_noise, k, iter->second , config.cam_params);
 						c.new_edges.push_back(c.poses_[k].Z_[iter->first]);
 
@@ -2516,9 +2374,9 @@ void print_map(const MapType & m)
 					auto it_index_left  = c.landmark_edge_indices.left.find(association);
 					auto found_index = it_index_left->second;
 					if (it_index_left != c.landmark_edge_indices.left.end()){
-						c.poses_[k].Z_[iter->first] = boost::dynamic_pointer_cast<StereoMeasurementEdge>(c.isam->getFactorsUnsafe()[found_index] );
+						c.poses_[k].Z_[iter->first] = std::dynamic_pointer_cast<StereoMeasurementEdge>(c.isam->getFactorsUnsafe()[found_index] );
 					}else{
-						c.poses_[k].Z_[iter->first] = boost::make_shared<StereoMeasurementEdge>(
+						c.poses_[k].Z_[iter->first] = std::make_shared<StereoMeasurementEdge>(
 							c.poses_[k].stereo_points[iter->first], config.stereo_noise, k, iter->second , config.cam_params);
 						c.new_edges.push_back(c.poses_[k].Z_[iter->first]);
 
@@ -3416,7 +3274,7 @@ void print_map(const MapType & m)
 
 	inline void VectorGLMBSLAM6D::rebuildIsam(VectorGLMBComponent6D &c){
 		//std::cout << "rebuilding isam\n";
-		c.isam = boost::make_shared<gtsam::ISAM2>(config.isam2_parameters);
+		c.isam = std::make_shared<gtsam::ISAM2>(config.isam2_parameters);
 		c.landmark_edge_indices.clear();
 		c.removed_edges.clear();
 		c.odometry_indices.clear();
@@ -3908,7 +3766,7 @@ void print_map(const MapType & m)
 			if (k > 0)
 			{
 				PoseType odometry_pose; // this is just zero odom , meaning brownian motion
-				OdometryEdge::shared_ptr odo = boost::make_shared<OdometryEdge>(k-1 , k , odometry_pose , config.odom_noise);
+				OdometryEdge::shared_ptr odo = std::make_shared<OdometryEdge>(k-1 , k , odometry_pose , config.odom_noise);
 
 				c.odometries_.push_back(odo);
 
@@ -4007,7 +3865,7 @@ void print_map(const MapType & m)
 	inline void VectorGLMBSLAM6D::init(VectorGLMBComponent6D &c)
 	{
 		temp_ = config.initTemp_;
-		c.isam = boost::make_shared<gtsam::ISAM2>(config.isam2_parameters);
+		c.isam = std::make_shared<gtsam::ISAM2>(config.isam2_parameters);
 
 	}
 

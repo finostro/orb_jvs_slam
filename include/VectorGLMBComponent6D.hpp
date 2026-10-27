@@ -89,7 +89,7 @@ struct VectorGLMBComponent6D {
 
 
 	gtsam::Values current_estimate, new_nodes;
-	boost::shared_ptr<gtsam::ISAM2> isam;
+	std::shared_ptr<gtsam::ISAM2> isam;
 	gtsam::ISAM2Result isam_result;
 
 	PoseType initial_pose;

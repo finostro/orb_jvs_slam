@@ -60,9 +60,9 @@ logKappa: -150 #-(540+60*60)
 
 viewingCosLimit: 0.4
 use_gui: true
-resultFolder: /home/finostro/euroc_results/V2_02_medium
-eurocFolder: /home/finostro/euroc_dataset/V2_02_medium
-eurocTimestampsFilename: /home/finostro/euroc_dataset/EuRoC_TimeStamps/V202.txt
+resultFolder: /home/felipe-inostroza/euroc_results/V2_02_medium
+eurocFolder: /run/media/felipe-inostroza/KINGSTON/euroc_dataset/V2_02_medium
+eurocTimestampsFilename: /run/media/felipe-inostroza/KINGSTON/euroc_dataset/EuRoC_TimeStamps/V202.txt
 stereo_init_max_depth: 60.0
 
 #isam2 params

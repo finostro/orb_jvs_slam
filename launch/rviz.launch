@@ -1,6 +1,0 @@
-<launch>
-
-  <node name="fi_rviz" pkg="rviz" type="rviz" args="-d $(find hglmbslam)/rviz/hglmb.rviz" output="log"/>
-
-</launch>
-

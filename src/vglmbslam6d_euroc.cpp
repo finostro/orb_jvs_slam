@@ -12,7 +12,11 @@ int main(int argc, char* argv[]){
     ("help,h", "produce this help message")
     ("cfg,c", boost::program_options::value<std::string>(&cfgFileName)->default_value("cfg/vglmbslam6d.yaml"), "configuration yaml file");
   boost::program_options::variables_map vm;
-  boost::program_options::store( boost::program_options::parse_command_line(argc, argv, desc), vm);
+  rclcpp::init(argc, argv);
+  auto args = rclcpp::remove_ros_arguments(argc, argv);
+  std::vector<const char*> argv_no_ros;
+  for (auto &a : args) argv_no_ros.push_back(a.c_str());
+  boost::program_options::store( boost::program_options::parse_command_line(argv_no_ros.size(), argv_no_ros.data(), desc), vm);
   boost::program_options::notify(vm);
 
   if( vm.count("help") ){
@@ -20,7 +24,6 @@ int main(int argc, char* argv[]){
     return 1;
   }
 
-  ros::init(argc, argv, "hglmbslam");
 
   rfs::VectorGLMBSLAM6D vglmb;
 
@@ -65,6 +68,5 @@ int main(int argc, char* argv[]){
 
 
   vglmb.waitForGuiClose();
-
-
+  rclcpp::shutdown();
 }
