@@ -38,6 +38,8 @@
 #include <math.h>
 #include <vector>
 #include <algorithm>
+#include <chrono>
+#include <fstream>
 #include <stdio.h>
 #include <filesystem>
 #include <unordered_map>
@@ -284,6 +286,7 @@ void print_map(const MapType & m)
 			std::string eurocFolder_, eurocTimestampsFilename_ , resultFolder;
 
 			bool use_gui_;
+			long seed_ = -1;
 
 
 			Eigen::MatrixXd base_link_to_cam0;
@@ -392,6 +395,22 @@ void print_map(const MapType & m)
 		 */
 
 		void optimize(int ni);
+
+		struct TraceRow
+		{
+			double logweight = -std::numeric_limits<double>::infinity();
+			int max_detection_time = -1;
+			int frontier_k = -1, frontier_nZ = 0, frontier_n_assoc = 0, frontier_n_candidates_nonclutter = 0;
+			double frontier_stamp = 0;
+			gtsam::Pose3 frontier_pose;
+			int seeded = 0, ransac_inliers = 0;
+			double ransac_ms = 0, pose_jump_trans = 0, pose_jump_rot = 0;
+		};
+		std::vector<TraceRow> traceRows_;
+		std::ofstream trace_;
+		std::chrono::steady_clock::time_point startTime_;
+		int maxDetectionTime(const VectorGLMBComponent6D &c) const;
+		void writeTrace();
 
 		/**
 		 * Select nearest neighbor at the last included time step (maxpose_)
@@ -1354,6 +1373,17 @@ void print_map(const MapType & m)
 		std::filesystem::create_directory(std::filesystem::path(config.resultFolder+"/video"));
 
 		config.use_gui_ = node["use_gui"].as<bool>();
+		if (node["seed"])
+		{
+			config.seed_ = node["seed"].as<long>();
+			srand48(config.seed_);
+		}
+		trace_.open(config.resultFolder + "/trace.csv");
+		trace_ << std::setprecision(17);
+		trace_ << "iteration,wall_s,component,logweight,best_logweight,maxpose,minpose,max_detection_time,"
+				  "best_DA_max_detection_time,frontier_k,frontier_nZ,frontier_n_assoc,frontier_n_candidates_nonclutter,"
+				  "seeded,ransac_inliers,ransac_ms,pose_jump_trans,pose_jump_rot,"
+				  "frontier_stamp,frontier_tx,frontier_ty,frontier_tz,frontier_qw,frontier_qx,frontier_qy,frontier_qz\n";
 
 		config.eurocTimestampsFilename_ = node["eurocTimestampsFilename"].as<std::string>();
 
@@ -1541,8 +1571,35 @@ void print_map(const MapType & m)
 		
 		
 	}
+	inline int VectorGLMBSLAM6D::maxDetectionTime(const VectorGLMBComponent6D &c) const
+	{
+		int max_detection_time = std::max(maxpose_ - 1, 0);
+		while (max_detection_time > 0 && c.DA_bimap_[max_detection_time].size() == 0)
+			max_detection_time--;
+		return max_detection_time;
+	}
+
+	inline void VectorGLMBSLAM6D::writeTrace()
+	{
+		double wall_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - startTime_).count();
+		for (int i = 0; i < traceRows_.size(); i++)
+		{
+			auto &r = traceRows_[i];
+			auto q = r.frontier_pose.rotation().toQuaternion();
+			auto t = r.frontier_pose.translation();
+			trace_ << iteration_ << "," << wall_s << "," << i << "," << r.logweight << "," << bestWeight_ << ","
+				   << maxpose_ << "," << minpose_ << "," << r.max_detection_time << "," << best_DA_max_detection_time_ << ","
+				   << r.frontier_k << "," << r.frontier_nZ << "," << r.frontier_n_assoc << "," << r.frontier_n_candidates_nonclutter << ","
+				   << r.seeded << "," << r.ransac_inliers << "," << r.ransac_ms << "," << r.pose_jump_trans << "," << r.pose_jump_rot << ","
+				   << r.frontier_stamp << ","
+				   << t.x() << "," << t.y() << "," << t.z() << "," << q.w() << "," << q.x() << "," << q.y() << "," << q.z() << "\n";
+		}
+		trace_.flush();
+	}
+
 	inline void VectorGLMBSLAM6D::run(int numSteps)
 	{
+		startTime_ = std::chrono::steady_clock::now();
 
 		for (int i = 0; i < numSteps && rclcpp::ok(); i++)
 		{
@@ -1876,13 +1933,15 @@ void print_map(const MapType & m)
 		}
 
 
-		#pragma omp parallel for
+		traceRows_.assign(components_.size(), TraceRow());
+		#pragma omp parallel for schedule(static)
 		for (int i = 0; i < components_.size(); i++)
 		{
 
 
 			
 			auto &c = components_[i];
+			auto &trace_row = traceRows_[i];
 
 			// if (iteration_ % 15 == 0){
 			// 	rebuildIsam(c);
@@ -1915,6 +1974,18 @@ void print_map(const MapType & m)
 
 			if (!c.reverted_)
 				updateDAProbs(c, minpose_, maxpose_);
+
+			if (maxDetectionTime(c) + 1 < maxpose_)
+			{
+				int fk = maxDetectionTime(c) + 1;
+				trace_row.frontier_k = fk;
+				trace_row.frontier_nZ = c.poses_[fk].Z_.size();
+				trace_row.frontier_stamp = c.poses_[fk].stamp;
+				trace_row.frontier_pose = c.poses_[fk].pose;
+				for (auto &probs : c.DAProbs_[fk])
+					if (probs.i.size() > 1)
+						trace_row.frontier_n_candidates_nonclutter++;
+			}
 			for (int p = 0; p < maxpose_; p++)
 			{
 				c.prevDA_bimap_[p] = c.DA_bimap_[p];
@@ -2088,6 +2159,10 @@ void print_map(const MapType & m)
 
 				//assert (dist<0.1);
 			}
+			trace_row.logweight = c.logweight_;
+			trace_row.max_detection_time = max_detection_time_;
+			if (trace_row.frontier_k >= 0)
+				trace_row.frontier_n_assoc = c.DA_bimap_[trace_row.frontier_k].size();
 			if ( c.logweight_ == -std::numeric_limits<double>::infinity()){
 				continue;
 			}
@@ -2166,6 +2241,7 @@ void print_map(const MapType & m)
 
 		}
 
+		writeTrace();
 		iteration_++;
 
 

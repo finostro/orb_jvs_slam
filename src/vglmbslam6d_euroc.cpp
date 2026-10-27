@@ -27,9 +27,8 @@ int main(int argc, char* argv[]){
 
   rfs::VectorGLMBSLAM6D vglmb;
 
-  rfs::initializeGaussianGenerators();
-
   vglmb.loadConfig(cfgFileName);
+  rfs::initializeGaussianGenerators();
   vglmb.loadEuroc();
   vglmb.gt_est.loadTUM(vglmb.config.eurocFolder_ + "/mav0/state_groundtruth_estimate0/data.tum",vglmb.config.base_link_to_cam0_se3, vglmb.startingStamp);
   //vglmb.calculateWeight(vglmb.gt_graph);
