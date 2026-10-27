@@ -3553,7 +3553,7 @@ void print_map(const MapType & m)
 	inline void VectorGLMBSLAM6D::updateDAProbs(VectorGLMBComponent6D &c,
 												int minpose, int maxpose)
 	{
-
+		const double stereoGate = 50;
 
 
 		for (int k =0; k< minpose;k++){
@@ -3577,6 +3577,31 @@ void print_map(const MapType & m)
 				c.DAProbs_[k][nz].l.push_back(config.logKappa_);
 			}
 
+			// Bucket measurements by (uL, v) in gate-sized cells. A pair passing the stereo gate has
+			// |duL| <= gate and |dv| <= gate, so only the cells around the prediction can contain it.
+			double umin = std::numeric_limits<double>::infinity(), vmin = umin;
+			double umax = -umin, vmax = -umin;
+			for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
+			{
+				auto &z = c.poses_[k].stereo_points[nz];
+				if (!std::isfinite(z.uL()) || !std::isfinite(z.v()))
+					continue;
+				umin = std::min(umin, z.uL());
+				umax = std::max(umax, z.uL());
+				vmin = std::min(vmin, z.v());
+				vmax = std::max(vmax, z.v());
+			}
+			int ncols = umax >= umin ? int((umax - umin) / stereoGate) + 1 : 0;
+			int nrows = vmax >= vmin ? int((vmax - vmin) / stereoGate) + 1 : 0;
+			std::vector<std::vector<int>> cells(ncols * nrows);
+			for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
+			{
+				auto &z = c.poses_[k].stereo_points[nz];
+				if (!std::isfinite(z.uL()) || !std::isfinite(z.v()))
+					continue;
+				cells[int((z.v() - vmin) / stereoGate) * ncols + int((z.uL() - umin) / stereoGate)].push_back(nz);
+			}
+			std::vector<int> nearby;
 
 				for(int lmFovIdx =0; lmFovIdx <c.poses_[k].fov_.size();lmFovIdx++){
 					int lmidx = c.poses_[k].fov_[lmFovIdx];
@@ -3590,7 +3615,20 @@ void print_map(const MapType & m)
 
 					gtsam::StereoPoint2 predictedZ = c.camera.project(c.poses_[k].pose.transformTo(lm.position));
 
-					for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
+					nearby.clear();
+					if (std::isfinite(predictedZ.uL()) && std::isfinite(predictedZ.v()))
+					{
+						int c0 = std::clamp(std::floor((predictedZ.uL() - stereoGate - umin) / stereoGate), 0.0, double(ncols));
+						int c1 = std::clamp(std::floor((predictedZ.uL() + stereoGate - umin) / stereoGate), -1.0, ncols - 1.0);
+						int r0 = std::clamp(std::floor((predictedZ.v() - stereoGate - vmin) / stereoGate), 0.0, double(nrows));
+						int r1 = std::clamp(std::floor((predictedZ.v() + stereoGate - vmin) / stereoGate), -1.0, nrows - 1.0);
+						for (int r = r0; r <= r1; r++)
+							for (int col = c0; col <= c1; col++)
+								nearby.insert(nearby.end(), cells[r * ncols + col].begin(), cells[r * ncols + col].end());
+						std::sort(nearby.begin(), nearby.end());
+					}
+
+					for (int nz : nearby)
 					{
 
 						double p=0.0;
@@ -3608,7 +3646,7 @@ void print_map(const MapType & m)
 
 						double error_scalar = (c.poses_[k].stereo_points[nz]-predictedZ).vector().norm();
 
-						if (error_scalar > 50){
+						if (error_scalar > stereoGate){
 							continue;
 						}
 
