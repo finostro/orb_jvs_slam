@@ -9,6 +9,11 @@ set(CMAKE_BUILD_TYPE RelWithDebInfo)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# hardware popcount for ORB descriptor distances (std::bitset::count)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+  add_compile_options(-mpopcnt)
+endif()
+
 option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." TRUE)
 if(FORCE_COLORED_OUTPUT)
   if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
