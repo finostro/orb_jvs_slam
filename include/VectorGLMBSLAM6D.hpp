@@ -3191,9 +3191,12 @@ void print_map(const MapType & m)
 						}
 						else
 						{
+							// unborn landmark outside the birth window: reject before the bimap lookups
+							if (lm.numDetections_ == 0 && !(lm.birthTime_ < c.poses_[k].stamp && lm.birthTime_ > c.poses_[k].stamp - 1.0))
+								continue;
 							if (c.DA_bimap_[k].right.count(c.DAProbs_[k][nz].i[a]) == 0)
 							{ // landmark is not already associated to another measurement
-								
+
 								if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id].numDetections_ == 0)
 								{
 									int kbirth  = lm.birthPose->id;
