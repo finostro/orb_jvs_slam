@@ -2942,6 +2942,27 @@ void print_map(const MapType & m)
 		return expectedWeightChange;
 	}
 	/**
+	 * Per-thread scratch marks indexed by landmark. Each call reserves `span` fresh stamp values
+	 * starting at the returned base + 1, so stale marks from earlier calls never match and the
+	 * buffer is never cleared; 0 is never a valid stamp.
+	 */
+	inline std::vector<int> &landmarkMarks(size_t size, int span, int &base)
+	{
+		thread_local std::vector<int> marks;
+		thread_local int next = 0;
+		if (marks.size() < size)
+			marks.resize(size, 0);
+		if (next > std::numeric_limits<int>::max() - span - 1)
+		{
+			std::fill(marks.begin(), marks.end(), 0);
+			next = 0;
+		}
+		base = next;
+		next += span + 1;
+		return marks;
+	}
+
+	/**
 	 * Flat mirror of which measurements are associated in frames [minpose, maxpose); frames outside
 	 * the window are answered from the bimap. Callers must call set() whenever they change DA_bimap_.
 	 */
@@ -3195,15 +3216,16 @@ void print_map(const MapType & m)
 		std::fill(c.landmarksResetProb_.begin(), c.landmarksResetProb_.end(),
 				  -config.logExistenceOdds);
 		std::fill(c.landmarksInitProb_.begin(), c.landmarksInitProb_.end(), config.logExistenceOdds);
-		// lmAssocStamp[lm index] == k+1  <=>  DA_bimap_[k].right contains the landmark
-		std::vector<int> lmAssocStamp(c.landmarks_.size(), 0);
+		// lmAssocStamp[lm index] == stampBase+k+1  <=>  DA_bimap_[k].right contains the landmark
+		int stampBase;
+		std::vector<int> &lmAssocStamp = landmarkMarks(c.landmarks_.size(), maxpose_, stampBase);
 		const int lmId0 = c.landmarks_[0].id;
 		MeasurementAssociationFlags measAssoc;
 		measAssoc.build(c, minpose_, maxpose_);
 		for (int k = minpose_; k < maxpose_; k++)
 		{
 			for (auto &assoc : c.DA_bimap_[k].left)
-				lmAssocStamp[assoc.second - lmId0] = k + 1;
+				lmAssocStamp[assoc.second - lmId0] = stampBase + k + 1;
 
 			for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
 			{
@@ -3271,7 +3293,7 @@ void print_map(const MapType & m)
 							// unborn landmark outside the birth window: reject before the bimap lookups
 							if (lm.numDetections_ == 0 && !(lm.birthTime_ < c.poses_[k].stamp && lm.birthTime_ > c.poses_[k].stamp - 1.0))
 								continue;
-							if (lmAssocStamp[c.DAProbs_[k][nz].i[a] - lmId0] != k + 1)
+							if (lmAssocStamp[c.DAProbs_[k][nz].i[a] - lmId0] != stampBase + k + 1)
 							{ // landmark is not already associated to another measurement
 
 								if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id].numDetections_ == 0)
@@ -3372,7 +3394,7 @@ void print_map(const MapType & m)
 							assert(result.second);
 							if (result.second)
 							{
-								lmAssocStamp[probs.i[sample] - lmId0] = k + 1;
+								lmAssocStamp[probs.i[sample] - lmId0] = stampBase + k + 1;
 								measAssoc.set(k, nz, true);
 							}
 						}
@@ -3388,7 +3410,7 @@ void print_map(const MapType & m)
 							if (result)
 							{
 								lmAssocStamp[selectedDA - lmId0] = 0;
-								lmAssocStamp[probs.i[sample] - lmId0] = k + 1;
+								lmAssocStamp[probs.i[sample] - lmId0] = stampBase + k + 1;
 							}
 
 							// add an log for possible landmark merge
@@ -3410,7 +3432,7 @@ void print_map(const MapType & m)
 									auto result = c.DA_bimap_[kbirth].insert({c.landmarks_[probs.i[sample] - c.landmarks_[0].id].birthMatch, probs.i[sample] });
 									assert(result.second);
 									if (result.second && kbirth == k)
-										lmAssocStamp[probs.i[sample] - lmId0] = k + 1;
+										lmAssocStamp[probs.i[sample] - lmId0] = stampBase + k + 1;
 									if (result.second)
 										measAssoc.set(kbirth, c.landmarks_[probs.i[sample] - c.landmarks_[0].id].birthMatch, true);
 									lm.numDetections_++;
@@ -3477,21 +3499,26 @@ void print_map(const MapType & m)
 	}
 	inline void VectorGLMBSLAM6D::updateMetaStates(VectorGLMBComponent6D &c)
 	{
+		const std::bitset<256> lowWord(~0ULL);
+		std::vector<int> avg_desc;
+		std::vector<ORBDescriptor*> descriptors;
+		std::vector<int> distances_bef, distances_after;
 
 		for (auto &map_point : c.landmarks_)
 			{
 
 				if (map_point.numDetections_ >0){
 					
-					std::vector<int> avg_desc(256,0);
+					avg_desc.assign(256, 0);
 					map_point.normalVector.setZero();
 					double avg_depth=0;
 					double max_depth=0;
 					double min_depth= std::numeric_limits<double>::infinity();
 					int max_dist_bef = 0 ;
 
-					std::vector<ORBDescriptor*> descriptors;
-					std::vector<int> distances_bef, distances_after;
+					descriptors.clear();
+					distances_bef.clear();
+					distances_after.clear();
 
 
 					for (int k : map_point.is_detected){
@@ -3517,11 +3544,12 @@ void print_map(const MapType & m)
 
 						descriptors.push_back(&c.poses_[k].descriptors_left[nl]);
 						descriptors.push_back(&c.poses_[k].descriptors_right[nr]);
-						for(int i=0;i<256;i++){
-							if (desc_left.desc[i])
-								avg_desc[i]++;
-							if (desc_right.desc[i])
-								avg_desc[i]++;
+						for (int w = 0; w < 4; w++)
+						{
+							unsigned long long left_bits = ((desc_left.desc >> (64 * w)) & lowWord).to_ullong();
+							unsigned long long right_bits = ((desc_right.desc >> (64 * w)) & lowWord).to_ullong();
+							for (int b = 0; b < 64; b++)
+								avg_desc[64 * w + b] += ((left_bits >> b) & 1) + ((right_bits >> b) & 1);
 						}
 						Eigen::Vector3d lmpos = map_point.position;
 						Eigen::Vector3d poset = c.poses_[k].pose.translation();
@@ -3597,8 +3625,8 @@ void print_map(const MapType & m)
 		{
 			map_point.numFoV_ = 0;
 			map_point.numFoV_ = 0;
-			map_point.is_in_fov_.resize(0);
-			map_point.predicted_scales.resize(0);
+			map_point.is_in_fov_.clear();
+			map_point.predicted_scales.clear();
 		}
 
 		// landmarks that can enter any FoV this call, in index order (stops where the scan used to break)
@@ -3611,8 +3639,9 @@ void print_map(const MapType & m)
 			if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp && c.landmarks_[lm].birthTime_ >= c.poses_[minpose_].stamp))
 				candidates.push_back(lm);
 		}
-		// lmAssocStamp[lm index] == k+1  <=>  DA_bimap_[k].right contains the landmark
-		std::vector<int> lmAssocStamp(c.landmarks_.size(), 0);
+		// lmAssocStamp[lm index] == stampBase+k+1  <=>  DA_bimap_[k].right contains the landmark
+		int stampBase;
+		std::vector<int> &lmAssocStamp = landmarkMarks(c.landmarks_.size(), maxpose_, stampBase);
 		const int lmId0 = c.landmarks_.empty() ? 0 : c.landmarks_[0].id;
 
 		for (int k = 0; k < maxpose_; k++)
@@ -3625,11 +3654,11 @@ void print_map(const MapType & m)
 			if ( c.poses_[k].Z_.size() > 0 && c.poses_[k].isKeypose)
 			{ // if no measurements we set FoV to empty ,
 				for (auto &assoc : c.DA_bimap_[k].left)
-					lmAssocStamp[assoc.second - lmId0] = k + 1;
+					lmAssocStamp[assoc.second - lmId0] = stampBase + k + 1;
 
 				for (int lm : candidates)
 				{
-					bool associated = lmAssocStamp[lm] == k + 1;
+					bool associated = lmAssocStamp[lm] == stampBase + k + 1;
 					bool isInFov = false;
 					{
 						double predScale=0;
