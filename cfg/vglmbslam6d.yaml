@@ -26,6 +26,7 @@ numPosesToOptimize: 15
 doCrossover: false
 
 maxWeightDifference: 1e+6
+visitedPruneLogRatio: 0
 
 perturbTrans: 0.2
 perturbRot: 0.02

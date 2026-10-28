@@ -348,6 +348,7 @@ void print_map(const MapType & m)
 			int maxframe;
 			int staticframes;
 			double maxWeightDifference;
+			double visitedPruneLogRatio_ = 0; /**< >0: drop visited_ entries with (w - max w)/temp below -this */
 		} config;
 
 		/**
@@ -610,6 +611,9 @@ void print_map(const MapType & m)
 			std::vector<boost::bimap<int, int, boost::container::allocator<int>>>,
 			EstimateWeight>
 			visited_;
+		// hashes and weights of entries dropped by visitedPruneLogRatio that the maxWeightDifference
+		// rule would still keep; re-inserting one is refused as if the entry were still in visited_
+		std::unordered_map<uint64_t, double> visitedTombstones_;
 		
 		EstimateWeight gt_est;
 		double startingStamp;
@@ -829,8 +833,43 @@ void print_map(const MapType & m)
 		checkDA(c);
 
 	}
+	inline uint64_t daHash(const VectorGLMBComponent6D::BimapType &da)
+	{
+		uint64_t h = 1469598103934665603ULL;
+		auto mix = [&h](uint64_t v)
+		{
+			h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+			h *= 1099511628211ULL;
+		};
+		for (size_t k = 0; k < da.size(); k++)
+		{
+			mix(da[k].size());
+			for (auto &a : da[k].left)
+				mix((uint64_t(uint32_t(a.first)) << 32) | uint32_t(a.second));
+		}
+		return h;
+	}
+
 	void VectorGLMBSLAM6D::sampleComponents()
 	{
+		if (config.visitedPruneLogRatio_ > 0)
+		{
+			double maxw = -std::numeric_limits<double>::infinity();
+			for (auto &v : visited_)
+				maxw = std::max(maxw, v.second.weight);
+			for (auto it = visited_.begin(); it != visited_.end();)
+			{
+				if ((it->second.weight - maxw) / temp_ < -config.visitedPruneLogRatio_)
+				{
+					visitedTombstones_[daHash(it->first)] = it->second.weight;
+					it = visited_.erase(it);
+				}
+				else
+				{
+					++it;
+				}
+			}
+		}
 
 		// do logsumexp on the components to calculate probabilities
 
@@ -1314,6 +1353,8 @@ void print_map(const MapType & m)
 		config.staticframes = node["staticframes"].as<int>();
 
 		config.maxWeightDifference = node["maxWeightDifference"].as<double>();
+		if (node["visitedPruneLogRatio"])
+			config.visitedPruneLogRatio_ = node["visitedPruneLogRatio"].as<double>();
 
 		config.crossoverNumIter_ = node["crossoverNumIter"].as<int>();
 		config.numPosesToOptimize_ = node["numPosesToOptimize"].as<int>();
@@ -1614,7 +1655,7 @@ void print_map(const MapType & m)
 				maxpose_ = components_[0].poses_.size();
 
 			if (maxpose_ > maxpose_prev_ && maxpose_>20){
-				if (visited_.size() < 10) maxpose_ = maxpose_prev_;
+				if (visited_.size() + visitedTombstones_.size() < 10) maxpose_ = maxpose_prev_;
 			}
 
 			
@@ -2142,6 +2183,7 @@ void print_map(const MapType & m)
 				c.poses_[numpose].pose = c.poses_[max_detection_time_].pose;
 			}
 			auto pair = std::make_pair(c.DA_bimap_, to_insert);
+			uint64_t pairHash = config.visitedPruneLogRatio_ > 0 ? daHash(pair.first) : 0;
 
 
 			for ( int numpose =minpose_+1 ; numpose < maxpose_; numpose++){
@@ -2179,7 +2221,10 @@ void print_map(const MapType & m)
 			#pragma omp critical(bestweight)
 			{
 				if (c.logweight_ > bestWeight_-config.maxWeightDifference){
-					std::tie(it, inserted) = visited_.insert(pair);
+					if (!visitedTombstones_.empty() && visitedTombstones_.count(pairHash))
+						inserted = false;
+					else
+						std::tie(it, inserted) = visited_.insert(pair);
 					insertionP_ = insertionP_ * 0.99;
 					if (inserted){
 						insertionP_ += 0.01;
@@ -2232,6 +2277,13 @@ void print_map(const MapType & m)
 						publishMarkers(c);
 					}
 
+					for (auto i = visitedTombstones_.begin(); i != visitedTombstones_.end();)
+					{
+						if (i->second < bestWeight_ - config.maxWeightDifference)
+							i = visitedTombstones_.erase(i);
+						else
+							++i;
+					}
 					for (auto i = visited_.begin(), last = visited_.end(); i != last; ) {
 					if (i->second.weight < bestWeight_-config.maxWeightDifference ) {
 						i = visited_.erase(i);
