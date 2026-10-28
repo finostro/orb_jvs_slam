@@ -20,7 +20,7 @@
   <depend>fmt</depend>
   <depend>libgoogle-glog-dev</depend>
   <depend>boost</depend>
-  <depend>tbb</depend>
+  <depend>libjemalloc-dev</depend>
 
   <exec_depend>rviz2</exec_depend>
   <exec_depend>launch_ros</exec_depend>
