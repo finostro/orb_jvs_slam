@@ -619,6 +619,7 @@ void print_map(const MapType & m)
 		int maxpose_prev_ = 2;
 		int iteration_ = 0;
 		int iterationBest_ = 0;
+		int lastGraphWriteIteration_ = -1000000; /**< iteration of the last video/beststate_* write */
 		double insertionP_ = 0.5;
 
 		// euroc dataset
@@ -2207,8 +2208,13 @@ void print_map(const MapType & m)
 					// 		  << bestWeight_ << " ============\n"
 					// 		  << termcolor::reset;
 
-					gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.current_estimate, filename_g2o.str()	);
-					c.isam->saveGraph(filename_dot.str() );
+					// the full-graph dumps grow with the trajectory, so write at most once per 10 iterations
+					if (iteration_ - lastGraphWriteIteration_ >= 10)
+					{
+						lastGraphWriteIteration_ = iteration_;
+						gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.current_estimate, filename_g2o.str()	);
+						c.isam->saveGraph(filename_dot.str() );
+					}
 					// std::cout << "globalchi2 " << c.isam_result.getErrorAfter() << "\n";
 					std::cout <<"  log det H: " << c.logDetH_ << "\n";
 
