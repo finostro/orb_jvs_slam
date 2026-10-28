@@ -3708,9 +3708,10 @@ void print_map(const MapType & m)
 		const double logGaussNorm = -0.5 * 3 * std::log(2 * M_PI); // 3 is dimension of measurement
 
 
+		// swap with empty vectors to release the buffers; clear() keeps their capacity for every past pose
 		for (int k =0; k< minpose;k++){
-			c.reverseDAProbs_[k].clear();
-			c.DAProbs_[k].clear();
+			std::vector<AssociationProbabilities>().swap(c.reverseDAProbs_[k]);
+			std::vector<AssociationProbabilities>().swap(c.DAProbs_[k]);
 		}
 
 		for (int k = minpose; k < maxpose; k++)
