@@ -2980,6 +2980,64 @@ void print_map(const MapType & m)
 	}
 
 	/**
+	 * Cheap frustum test on flat copies of landmark positions and distance limits. It rejects only
+	 * pairs OrbslamPose::isInFrustum would also reject (margins far above rounding error), so calling
+	 * isInFrustum only when mayBeVisible() holds gives the same result.
+	 */
+	struct FrustumPrefilter
+	{
+		std::vector<Eigen::Vector3d> pos;
+		std::vector<double> maxD2, minD2;
+		double fx, fy, skew, cx, cy, fxb;
+		Eigen::Matrix3d R;
+		Eigen::Vector3d t;
+		double minX, maxX, minY, maxY;
+
+		FrustumPrefilter(const VectorGLMBComponent6D &c, const std::vector<int> &lms)
+		{
+			const auto &K = c.camera.calibration();
+			fx = K.fx(), fy = K.fy(), skew = K.skew(), cx = K.px(), cy = K.py(), fxb = K.fx() * K.baseline();
+			pos.resize(lms.size());
+			maxD2.resize(lms.size());
+			minD2.resize(lms.size());
+			for (size_t i = 0; i < lms.size(); i++)
+			{
+				auto &lm = c.landmarks_[lms[i]];
+				pos[i] = lm.position;
+				double maxD = lm.mfMaxDistance * (1 + 1e-4) + 1e-3;
+				double minD = lm.mfMinDistance * (1 - 1e-4) - 1e-3;
+				maxD2[i] = maxD * maxD;
+				minD2[i] = minD > 0 ? minD * minD : 0;
+			}
+		}
+		void setPose(const OrbslamPose &p)
+		{
+			R = p.pose.rotation().matrix();
+			t = p.pose.translation();
+			minX = p.mnMinX - 1, maxX = p.mnMaxX + 1, minY = p.mnMinY - 1, maxY = p.mnMaxY + 1;
+		}
+		bool mayBeVisible(size_t i) const
+		{
+			Eigen::Vector3d d = pos[i] - t;
+			double d2 = d.squaredNorm();
+			if (d2 > maxD2[i] || d2 < minD2[i])
+				return false;
+			double z = R.col(2).dot(d);
+			if (z < -1e-9)
+				return false;
+			if (z > 1e-6)
+			{
+				double x = R.col(0).dot(d), y = R.col(1).dot(d);
+				double u = (fx * x + skew * y) / z + cx;
+				double v = fy * y / z + cy;
+				if (u < minX || u > maxX || v < minY || v > maxY || u - fxb / z < minX)
+					return false;
+			}
+			return true;
+		}
+	};
+
+	/**
 	 * Flat mirror of which measurements are associated in frames [minpose, maxpose); frames outside
 	 * the window are answered from the bimap. Callers must call set() whenever they change DA_bimap_.
 	 */
@@ -3660,6 +3718,7 @@ void print_map(const MapType & m)
 		int stampBase;
 		std::vector<int> &lmAssocStamp = landmarkMarks(c.landmarks_.size(), maxpose_, stampBase);
 		const int lmId0 = c.landmarks_.empty() ? 0 : c.landmarks_[0].id;
+		FrustumPrefilter prefilter(c, candidates);
 
 		for (int k = 0; k < maxpose_; k++)
 		{
@@ -3673,14 +3732,16 @@ void print_map(const MapType & m)
 				for (auto &assoc : c.DA_bimap_[k].left)
 					lmAssocStamp[assoc.second - lmId0] = stampBase + k + 1;
 
-				for (int lm : candidates)
+				prefilter.setPose(c.poses_[k]);
+				for (size_t ci = 0; ci < candidates.size(); ci++)
 				{
+					int lm = candidates[ci];
 					bool associated = lmAssocStamp[lm] == stampBase + k + 1;
 					bool isInFov = false;
 					{
 						double predScale=0;
-						if (associated || c.poses_[k].isInFrustum(&c.landmarks_[lm],
-													config.viewingCosLimit_, c.camera, &predScale))
+						if (associated || (prefilter.mayBeVisible(ci) && c.poses_[k].isInFrustum(&c.landmarks_[lm],
+													config.viewingCosLimit_, c.camera, &predScale)))
 						{
 
 							c.poses_[k].fov_.push_back(c.landmarks_[lm].id);
