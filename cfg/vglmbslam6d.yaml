@@ -16,7 +16,7 @@ numLandmarks: 100
 numComponents: 12
 
 maxRange: 5
-numLevenbergIterations: 2
+numLevenbergIterations: 0
 tempFactor: 0.995
 initTemp: 1000
 birthDeathNumIter: 1
@@ -26,7 +26,7 @@ numPosesToOptimize: 15
 doCrossover: false
 
 maxWeightDifference: 1e+6
-visitedPruneLogRatio: 0
+visitedPruneLogRatio: 50
 
 perturbTrans: 0.2
 perturbRot: 0.02
