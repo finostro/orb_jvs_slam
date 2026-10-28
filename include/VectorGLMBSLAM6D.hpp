@@ -837,23 +837,23 @@ void print_map(const MapType & m)
 		std::map<double, std::map<rfs::VectorGLMBComponent6D::BimapType, rfs::EstimateWeight>::iterator > probs_to_iterator;
 		std::vector<double> probs(visited_.size(), 0);
 		double maxw = -std::numeric_limits<double>::infinity();
-		for (auto it = visited_.begin(), it_end = visited_.end(); it != it_end;
-			 it++)
+		for (auto entry = visited_.begin(), entry_end = visited_.end(); entry != entry_end;
+			 entry++)
 		{
-			if (it->second.weight > maxw)
-				maxw = it->second.weight;
+			if (entry->second.weight > maxw)
+				maxw = entry->second.weight;
 		}
 		int i = 1;
 		probs[0] = std::exp((visited_.begin()->second.weight - maxw) / temp_);
 		probs_to_iterator.insert({std::exp((visited_.begin()->second.weight - maxw) / temp_) , visited_.begin()});
-		for (auto it = std::next(visited_.begin()), it_end = visited_.end();
-			 it != it_end; i++, it++)
+		for (auto entry = std::next(visited_.begin()), entry_end = visited_.end();
+			 entry != entry_end; i++, entry++)
 		{
-			if (it->second.weight > maxw)
-				maxw = it->second.weight;
-			probs[i] = probs[i - 1] + std::exp((it->second.weight - maxw) / temp_);
+			if (entry->second.weight > maxw)
+				maxw = entry->second.weight;
+			probs[i] = probs[i - 1] + std::exp((entry->second.weight - maxw) / temp_);
 
-			probs_to_iterator.insert({probs[i] , it});
+			probs_to_iterator.insert({probs[i] , entry});
 		}
 		/*
 		 std:: cout << "maxw " << maxw <<  "  temp " << temp_ << "\n";
@@ -867,7 +867,6 @@ void print_map(const MapType & m)
 		double r1 = dist(randomGenerators_[0]);
 		double r2 = dist(randomGenerators_[0]);
 		int j = 0;
-		auto it = visited_.begin();
 		for (int i = 0; i < components_.size(); i++)
 		{
 			auto &c = components_[i];
@@ -894,9 +893,9 @@ void print_map(const MapType & m)
 						c.poses_[k].referenceKeypose = (k / config.keypose_skip) * config.keypose_skip;
 						c.poses_[k].transformFromReferenceKeypose = c.poses_[c.poses_[k].referenceKeypose].pose.transformPoseTo(c.poses_[k].pose);
 
-						for (auto iter = c.DA_bimap_[k].left.begin(), iend = c.DA_bimap_[k].left.end(); iter != iend;
-						++iter){
-							auto &lm = c.landmarks_[ iter->second - c.landmarks_[0].id ];
+						for (auto assoc = c.DA_bimap_[k].left.begin(), assoc_end = c.DA_bimap_[k].left.end(); assoc != assoc_end;
+						++assoc){
+							auto &lm = c.landmarks_[ assoc->second - c.landmarks_[0].id ];
 							lm.numDetections_--;
 							lm.is_detected.erase(k);
 							if (lm.numDetections_ == 1){
@@ -922,15 +921,15 @@ void print_map(const MapType & m)
 			
 
 
-			for (auto it: it->second.estimate){
-				if (it.key  < c.poses_.size()){
-					c.poses_[it.key].pose =  it.value.cast<PoseType>();
+			for (auto keyValue : da1->second.estimate){
+				if (keyValue.key  < c.poses_.size()){
+					c.poses_[keyValue.key].pose =  keyValue.value.cast<PoseType>();
 				}else{
-					c.landmarks_[it.key-c.landmarks_[0].id].position = it.value.cast<PointType>();
+					c.landmarks_[keyValue.key-c.landmarks_[0].id].position = keyValue.value.cast<PointType>();
 				}
 			}
 
-			// std::cout  << "sample w: " << it->second << " j " << j  << " r " << r <<" prob "  << probs[j]<< "\n";
+			// std::cout  << "sample w: " << da1->second.weight << " j " << j  << " r " << r1 <<" prob "  << probs[j]<< "\n";
 
 			r1 = fmod(r1 + probs[probs.size() - 1] / components_.size() , probs[probs.size() - 1]);
 			r2 = fmod(r2 + probs[probs.size() - 1] / components_.size() , probs[probs.size() - 1]);
