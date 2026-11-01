@@ -1,5 +1,7 @@
 #include "VectorGLMBSLAM6D.hpp"
 #include <boost/program_options.hpp>
+#include <tbb/global_control.h>
+#include <memory>
 
 
 int main(int argc, char* argv[]){
@@ -28,6 +30,10 @@ int main(int argc, char* argv[]){
   rfs::VectorGLMBSLAM6D vglmb;
 
   vglmb.loadConfig(cfgFileName);
+  // the 12 components already run in parallel under OpenMP; iSAM2's own TBB workers mostly spin in sched_yield
+  std::unique_ptr<tbb::global_control> tbbLimit;
+  if (vglmb.config.tbbMaxThreads_ > 0)
+    tbbLimit = std::make_unique<tbb::global_control>(tbb::global_control::max_allowed_parallelism, vglmb.config.tbbMaxThreads_);
   rfs::initializeGaussianGenerators();
   vglmb.loadEuroc();
   vglmb.gt_est.loadTUM(vglmb.config.eurocFolder_ + "/mav0/state_groundtruth_estimate0/data.tum",vglmb.config.base_link_to_cam0_se3, vglmb.startingStamp);

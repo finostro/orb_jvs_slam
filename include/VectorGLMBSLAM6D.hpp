@@ -349,6 +349,7 @@ void print_map(const MapType & m)
 			int staticframes;
 			double maxWeightDifference;
 			double visitedPruneLogRatio_ = 0; /**< >0: drop visited_ entries with (w - max w)/temp below -this */
+			int tbbMaxThreads_ = 0; /**< >0: cap TBB (iSAM2's internal parallelism) at this many threads */
 		} config;
 
 		/**
@@ -1355,6 +1356,8 @@ void print_map(const MapType & m)
 		config.maxWeightDifference = node["maxWeightDifference"].as<double>();
 		if (node["visitedPruneLogRatio"])
 			config.visitedPruneLogRatio_ = node["visitedPruneLogRatio"].as<double>();
+		if (node["tbbMaxThreads"])
+			config.tbbMaxThreads_ = node["tbbMaxThreads"].as<int>();
 
 		config.crossoverNumIter_ = node["crossoverNumIter"].as<int>();
 		config.numPosesToOptimize_ = node["numPosesToOptimize"].as<int>();
