@@ -10,7 +10,7 @@ staticframes: 0
 PE: 1e-10
 logExistenceOdds: -150
 PD: 0.6
-numIterations: 2500
+numIterations: 2700
 numGibbs: 10
 numLandmarks: 100
 numComponents: 12
