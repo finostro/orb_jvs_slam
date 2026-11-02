@@ -73,6 +73,38 @@ struct AssociationProbabilities {
 
 
 /**
+ * updateFoV state kept between calls. Each keypose row holds the landmarks whose visibility from it
+ * is not robustly "out", computed against reference copies of the pose and landmark; an entry is
+ * fragile when moving pose or landmark by up to the cache tolerance could change its result.
+ */
+struct FovCache {
+	struct Entry {
+		int lm;
+		int scale;
+		bool visible, fragile;
+	};
+	struct Row {
+		bool valid = false;
+		bool frozen = false; /**< kept unchanged while before minpose (fovFreezeOld) */
+		Eigen::Matrix3d R0;
+		Eigen::Vector3d t0;
+		std::vector<Entry> e; /**< sorted by landmark index */
+	};
+	struct Ref {
+		bool valid = false;
+		Eigen::Vector3d p0, n0;
+		float minD0, maxD0;
+	};
+	std::vector<Row> rows;	   /**< by pose index */
+	std::vector<Ref> lms;	   /**< by landmark index */
+	std::vector<int> tracked;  /**< landmarks with a valid Ref, sorted */
+	std::vector<int> candMark, changedMark;
+	int stamp = 0;
+	int maxValidRow = -1;
+	long calls = 0, rowsSeen = 0, rowsRebuilt = 0, rowsFrozen = 0, lmsRefreshed = 0, fragileTests = 0, pairTests = 0, boundMisses = 0;
+};
+
+/**
  * Struct to store a single component of a VGLMB , with its own g2o optimizer
  */
 struct VectorGLMBComponent6D {
@@ -120,6 +152,7 @@ struct VectorGLMBComponent6D {
 	int numPoses_, numPoints_;
 	bool reverted_ = false;
 	std::vector<std::pair<int, int>> tomerge_; /**< proportional to probability of merge heuristic*/
+	FovCache fovCache_;
 
     int maxpose_; /**< maximum pose to optimize to */
 

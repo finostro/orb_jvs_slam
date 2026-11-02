@@ -28,6 +28,8 @@ doCrossover: false
 maxWeightDifference: 1e+6
 visitedPruneLogRatio: 50
 tbbMaxThreads: 1
+fovCacheTol: 0.01
+fovFreezeOld: false
 
 perturbTrans: 0.2
 perturbRot: 0.02

@@ -350,6 +350,9 @@ void print_map(const MapType & m)
 			double maxWeightDifference;
 			double visitedPruneLogRatio_ = 0; /**< >0: drop visited_ entries with (w - max w)/temp below -this */
 			int tbbMaxThreads_ = 0; /**< >0: cap TBB (iSAM2's internal parallelism) at this many threads */
+			double fovCacheTol_ = 0; /**< >0: updateFoV reuses pose/landmark visibility while they move less than this (m, and rad-ish) */
+			bool fovCacheVerify_ = false; /**< check every cached updateFoV against the full computation and abort on mismatch */
+			bool fovFreezeOld_ = false; /**< with fovCacheTol: stop re-testing visibility from keyposes before minpose (changes results) */
 		} config;
 
 		/**
@@ -465,6 +468,8 @@ void print_map(const MapType & m)
 		 * @param c the GLMB component
 		 */
 		void updateFoV(VectorGLMBComponent6D &c);
+		void updateFoVFull(VectorGLMBComponent6D &c);
+		void updateFoVCached(VectorGLMBComponent6D &c);
 
 		/**
 		 * update descriptor and viewing angle according to associations
@@ -1358,6 +1363,12 @@ void print_map(const MapType & m)
 			config.visitedPruneLogRatio_ = node["visitedPruneLogRatio"].as<double>();
 		if (node["tbbMaxThreads"])
 			config.tbbMaxThreads_ = node["tbbMaxThreads"].as<int>();
+		if (node["fovCacheTol"])
+			config.fovCacheTol_ = node["fovCacheTol"].as<double>();
+		if (node["fovCacheVerify"])
+			config.fovCacheVerify_ = node["fovCacheVerify"].as<bool>();
+		if (node["fovFreezeOld"])
+			config.fovFreezeOld_ = node["fovFreezeOld"].as<bool>();
 
 		config.crossoverNumIter_ = node["crossoverNumIter"].as<int>();
 		config.numPosesToOptimize_ = node["numPosesToOptimize"].as<int>();
@@ -3093,6 +3104,77 @@ void print_map(const MapType & m)
 	};
 
 	/**
+	 * Bounds OrbslamPose::isInFrustum over every pose within tol of (R0, t0) (|dt| and Frobenius |dR|)
+	 * and every landmark within tol of its Ref (position, normal, min/max distance):
+	 * OUT if it is false for all of them, IN if it is true with the same predicted scale for all,
+	 * FRAGILE otherwise. Margins also cover isInFrustum's float rounding.
+	 */
+	struct FovClassifier
+	{
+		enum Result { OUT, IN, FRAGILE };
+		double fx, fy, skew, cx, cy, fxb, tol, cosLimit;
+
+		FovClassifier(const VectorGLMBComponent6D &c, double tol, float viewingCosLimit) : tol(tol), cosLimit(viewingCosLimit)
+		{
+			const auto &K = c.camera.calibration();
+			fx = K.fx(), fy = K.fy(), skew = K.skew(), cx = K.px(), cy = K.py(), fxb = K.fx() * K.baseline();
+		}
+		Result operator()(const Eigen::Matrix3d &R0, const Eigen::Vector3d &t0, const OrbslamPose &pose, const FovCache::Ref &r) const
+		{
+			Eigen::Vector3d a = r.p0 - t0;
+			double dist = a.norm();
+			if (dist < 1e-6)
+				return FRAGILE;
+			double ea = 2 * tol;			   // bound on |change of p - t|
+			double ed = ea + tol * dist;	   // bound on |change of the camera-frame point|
+			double eD = tol + 1e-5 + 1e-6 * dist; // distance-limit change plus float rounding
+			double minD = r.minD0, maxD = r.maxD0;
+			if (dist + ea + eD < minD || dist - ea - eD > maxD)
+				return OUT;
+			bool in = dist - ea - eD >= minD && dist + ea + eD <= maxD;
+
+			double cos0 = a.dot(r.n0) / dist;
+			double ecos = 2 * ea / dist * (r.n0.norm() + tol) + tol + 1e-6;
+			if (cos0 + ecos < cosLimit)
+				return OUT;
+			in = in && cos0 - ecos >= cosLimit;
+
+			Eigen::Vector3d d = R0.transpose() * a;
+			double x = d.x(), y = d.y(), z = d.z();
+			if (z + ed < 0)
+				return OUT;
+			double zmin = z - ed;
+			if (zmin <= 0)
+				return FRAGILE;
+			double bx = ed * (z + std::abs(x)) / (z * zmin), by = ed * (z + std::abs(y)) / (z * zmin), b1 = ed / (z * zmin);
+			double u = (fx * x + skew * y) / z + cx, v = fy * y / z + cy, uR = u - fxb / z;
+			double du = std::abs(fx) * bx + std::abs(skew) * by + 1e-6 * (1 + std::abs(u));
+			double dv = std::abs(fy) * by + 1e-6 * (1 + std::abs(v));
+			double duR = du + std::abs(fxb) * b1 + 1e-6 * (1 + std::abs(uR));
+			if (u + du < pose.mnMinX || u - du > pose.mnMaxX || v + dv < pose.mnMinY || v - dv > pose.mnMaxY
+				|| uR + duR < pose.mnMinX || uR - duR > pose.mnMaxX)
+				return OUT;
+			in = in && u - du >= pose.mnMinX && u + du <= pose.mnMaxX && v - dv >= pose.mnMinY && v + dv <= pose.mnMaxY
+				&& uR - duR >= pose.mnMinX && uR + duR <= pose.mnMaxX;
+			if (!in)
+				return FRAGILE;
+
+			double lo = dist - ea - eD, hi = dist + ea + eD;
+			if (lo <= 0 || maxD - tol <= 0)
+				return FRAGILE;
+			double lsf = pose.mfLogScaleFactor;
+			auto level = [&](double q)
+			{
+				int n = std::ceil(q);
+				return n < 0 ? 0 : n >= pose.mnScaleLevels ? pose.mnScaleLevels - 1 : n;
+			};
+			if (level(std::log((maxD - tol) / hi) / lsf - 1e-6) != level(std::log((maxD + tol) / lo) / lsf + 1e-6))
+				return FRAGILE;
+			return IN;
+		}
+	};
+
+	/**
 	 * Flat mirror of which measurements are associated in frames [minpose, maxpose); frames outside
 	 * the window are answered from the bimap. Callers must call set() whenever they change DA_bimap_.
 	 */
@@ -3749,26 +3831,62 @@ void print_map(const MapType & m)
 		return;
 	}
 
-	inline void VectorGLMBSLAM6D::updateFoV(VectorGLMBComponent6D &c)
+	/** landmarks that can enter any FoV, in index order (stops where the scan used to break) */
+	inline std::vector<int> fovCandidates(const VectorGLMBComponent6D &c, int minpose, int maxpose)
 	{
-		for (auto &map_point : c.landmarks_)
-		{
-			map_point.numFoV_ = 0;
-			map_point.numFoV_ = 0;
-			map_point.is_in_fov_.clear();
-			map_point.predicted_scales.clear();
-		}
-
-		// landmarks that can enter any FoV this call, in index order (stops where the scan used to break)
 		std::vector<int> candidates;
 		for (int lm = 0; lm < c.landmarks_.size(); lm++)
 		{
-			if(c.landmarks_[lm].birthTime_ > c.poses_[maxpose_-1].stamp){
+			if(c.landmarks_[lm].birthTime_ > c.poses_[maxpose-1].stamp){
 				break;
 			}
-			if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose_-1].stamp && c.landmarks_[lm].birthTime_ >= c.poses_[minpose_].stamp))
+			if (c.landmarks_[lm].numDetections_ > 0 || (c.landmarks_[lm].birthTime_ <= c.poses_[maxpose-1].stamp && c.landmarks_[lm].birthTime_ >= c.poses_[minpose].stamp))
 				candidates.push_back(lm);
 		}
+		return candidates;
+	}
+
+	inline void VectorGLMBSLAM6D::updateFoV(VectorGLMBComponent6D &c)
+	{
+		if (config.fovCacheTol_ <= 0)
+		{
+			updateFoVFull(c);
+			return;
+		}
+		updateFoVCached(c);
+		if (!config.fovCacheVerify_)
+			return;
+		std::vector<std::vector<int>> fov(maxpose_), scales(maxpose_);
+		for (int k = 0; k < maxpose_; k++)
+			fov[k] = c.poses_[k].fov_, scales[k] = c.poses_[k].predicted_scales;
+		std::vector<int> numFoV(c.landmarks_.size());
+		for (int lm = 0; lm < c.landmarks_.size(); lm++)
+			numFoV[lm] = c.landmarks_[lm].numFoV_;
+		updateFoVFull(c);
+		for (int k = 0; k < maxpose_; k++)
+		{
+			if (fov[k] != c.poses_[k].fov_ || scales[k] != c.poses_[k].predicted_scales)
+			{
+				std::cerr << "fovCache mismatch at pose " << k << ": " << fov[k].size() << " vs " << c.poses_[k].fov_.size() << " landmarks\n";
+				std::abort();
+			}
+		}
+		for (int lm = 0; lm < c.landmarks_.size(); lm++)
+		{
+			if (numFoV[lm] != c.landmarks_[lm].numFoV_)
+			{
+				std::cerr << "fovCache numFoV mismatch at landmark " << lm << "\n";
+				std::abort();
+			}
+		}
+	}
+
+	inline void VectorGLMBSLAM6D::updateFoVFull(VectorGLMBComponent6D &c)
+	{
+		for (auto &map_point : c.landmarks_)
+			map_point.numFoV_ = 0;
+
+		std::vector<int> candidates = fovCandidates(c, minpose_, maxpose_);
 		// lmAssocStamp[lm index] == stampBase+k+1  <=>  DA_bimap_[k].right contains the landmark
 		int stampBase;
 		std::vector<int> &lmAssocStamp = landmarkMarks(c.landmarks_.size(), maxpose_, stampBase);
@@ -3801,8 +3919,6 @@ void print_map(const MapType & m)
 
 							c.poses_[k].fov_.push_back(c.landmarks_[lm].id);
 							c.poses_[k].predicted_scales.push_back(predScale);
-							c.landmarks_[lm].is_in_fov_.push_back(k);
-							c.landmarks_[lm].predicted_scales.push_back(predScale);
 							c.landmarks_[lm].numFoV_++;
 							isInFov = true;
 						}
@@ -3812,6 +3928,179 @@ void print_map(const MapType & m)
 					// }
 				}
 			}
+		}
+	}
+
+	/**
+	 * Same result as updateFoVFull. A keypose row is rebuilt only when the pose moved more than
+	 * fovCacheTol from the row's reference; otherwise only landmarks that are new, moved past the
+	 * tolerance or no longer candidates are re-tested, plus the row's fragile entries.
+	 */
+	inline void VectorGLMBSLAM6D::updateFoVCached(VectorGLMBComponent6D &c)
+	{
+		for (auto &map_point : c.landmarks_)
+			map_point.numFoV_ = 0;
+
+		auto &fc = c.fovCache_;
+		const double tol = config.fovCacheTol_;
+		const float cosLimit = config.viewingCosLimit_;
+		const int nlm = c.landmarks_.size();
+		const int lmId0 = c.landmarks_.empty() ? 0 : c.landmarks_[0].id;
+		std::vector<int> candidates = fovCandidates(c, minpose_, maxpose_);
+		fc.lms.resize(nlm);
+		fc.candMark.resize(nlm, 0);
+		fc.changedMark.resize(nlm, 0);
+		if (fc.rows.size() < c.poses_.size())
+			fc.rows.resize(c.poses_.size());
+		const int s = ++fc.stamp;
+		for (int lm : candidates)
+			fc.candMark[lm] = s;
+
+		std::vector<int> refreshed;
+		for (int lm : fc.tracked)
+		{
+			if (fc.candMark[lm] != s)
+			{
+				fc.lms[lm].valid = false;
+				fc.changedMark[lm] = s;
+			}
+		}
+		for (int lm : candidates)
+		{
+			auto &ref = fc.lms[lm];
+			auto &mp = c.landmarks_[lm];
+			if (ref.valid && (mp.position - ref.p0).norm() <= tol && (mp.normalVector - ref.n0).norm() <= tol &&
+				std::abs(mp.mfMinDistance - ref.minD0) <= tol && std::abs(mp.mfMaxDistance - ref.maxD0) <= tol)
+				continue;
+			ref.valid = true;
+			ref.p0 = mp.position;
+			ref.n0 = mp.normalVector;
+			ref.minD0 = mp.mfMinDistance;
+			ref.maxD0 = mp.mfMaxDistance;
+			fc.changedMark[lm] = s;
+			refreshed.push_back(lm);
+		}
+		fc.tracked = candidates;
+		fc.lmsRefreshed += refreshed.size();
+
+		FovClassifier classify(c, tol, cosLimit);
+		auto test = [&](int k, const FovCache::Row &row, int lm, std::vector<FovCache::Entry> &out)
+		{
+			auto cls = classify(row.R0, row.t0, c.poses_[k], fc.lms[lm]);
+			if (cls == FovClassifier::OUT)
+				return;
+			double predScale = 0;
+			bool vis = c.poses_[k].isInFrustum(&c.landmarks_[lm], cosLimit, c.camera, &predScale);
+			bool miss = cls == FovClassifier::IN && !vis;
+			fc.pairTests++;
+			fc.boundMisses += miss;
+			out.push_back({lm, (int)predScale, vis, cls == FovClassifier::FRAGILE || miss});
+		};
+
+		for (int k = maxpose_; k <= fc.maxValidRow && k < (int)fc.rows.size(); k++)
+		{
+			fc.rows[k].valid = false;
+			fc.rows[k].e.clear();
+		}
+		thread_local std::vector<FovCache::Entry> fresh, merged;
+		std::vector<int> assoc;
+		int maxValid = -1;
+		for (int k = 0; k < maxpose_; k++)
+		{
+			auto &pose = c.poses_[k];
+			pose.fov_.clear();
+			pose.predicted_scales.clear();
+			auto &row = fc.rows[k];
+			if (!(pose.Z_.size() > 0 && pose.isKeypose))
+			{
+				row.valid = false;
+				row.e.clear();
+				continue;
+			}
+			fc.rowsSeen++;
+			Eigen::Matrix3d R = pose.pose.rotation().matrix();
+			Eigen::Vector3d t = pose.pose.translation();
+			if (config.fovFreezeOld_ && k < minpose_ && row.valid)
+			{
+				// stale geometry; candidates and associations are still applied below
+				row.frozen = true;
+				fc.rowsFrozen++;
+			}
+			else if (!row.valid || row.frozen || (t - row.t0).norm() > tol || (R - row.R0).norm() > tol)
+			{
+				fc.rowsRebuilt++;
+				row.valid = true;
+				row.frozen = false;
+				row.R0 = R;
+				row.t0 = t;
+				row.e.clear();
+				for (int lm : candidates)
+					test(k, row, lm, row.e);
+			}
+			else
+			{
+				fresh.clear();
+				for (int lm : refreshed)
+					test(k, row, lm, fresh);
+				merged.clear();
+				size_t j = 0;
+				for (auto &e : row.e)
+				{
+					if (fc.changedMark[e.lm] == s)
+						continue;
+					while (j < fresh.size() && fresh[j].lm < e.lm)
+						merged.push_back(fresh[j++]);
+					merged.push_back(e);
+					if (e.fragile)
+					{
+						double predScale = 0;
+						merged.back().visible = pose.isInFrustum(&c.landmarks_[e.lm], cosLimit, c.camera, &predScale);
+						merged.back().scale = predScale;
+						fc.fragileTests++;
+					}
+				}
+				while (j < fresh.size())
+					merged.push_back(fresh[j++]);
+				row.e.swap(merged);
+			}
+			maxValid = k;
+
+			// associated landmarks are in the FoV with predicted scale 0, as in updateFoVFull
+			assoc.clear();
+			for (auto &a : c.DA_bimap_[k].left)
+			{
+				int lm = a.second - lmId0;
+				if (fc.candMark[lm] == s)
+					assoc.push_back(lm);
+			}
+			std::sort(assoc.begin(), assoc.end());
+			auto emit = [&](int lm, int scale)
+			{
+				pose.fov_.push_back(c.landmarks_[lm].id);
+				pose.predicted_scales.push_back(scale);
+				c.landmarks_[lm].numFoV_++;
+			};
+			size_t j = 0;
+			for (auto &e : row.e)
+			{
+				while (j < assoc.size() && assoc[j] < e.lm)
+					emit(assoc[j++], 0);
+				if (j < assoc.size() && assoc[j] == e.lm)
+					emit(assoc[j++], 0);
+				else if (e.visible && fc.candMark[e.lm] == s)
+					emit(e.lm, e.scale);
+			}
+			while (j < assoc.size())
+				emit(assoc[j++], 0);
+		}
+		fc.maxValidRow = maxValid;
+
+		if (++fc.calls % 2000 == 0)
+		{
+#pragma omp critical(fovstats)
+			std::cout << "fovCache calls " << fc.calls << " rowsRebuilt/frozen/seen " << fc.rowsRebuilt << "/" << fc.rowsFrozen << "/" << fc.rowsSeen
+					  << " lmsRefreshed " << fc.lmsRefreshed << " pairTests " << fc.pairTests << " fragileTests " << fc.fragileTests
+					  << " boundMisses " << fc.boundMisses << "\n";
 		}
 	}
 	
