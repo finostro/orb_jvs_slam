@@ -4173,7 +4173,7 @@ void print_map(const MapType & m)
 					auto point_in_camera_frame = c.poses_[k].pose.transformTo(lm.position);
 					if (point_in_camera_frame[2]<0 ){
 
-						break;
+						continue;
 					}
 
 					gtsam::StereoPoint2 predictedZ = c.camera.project(point_in_camera_frame);
