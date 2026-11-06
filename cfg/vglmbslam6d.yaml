@@ -68,7 +68,8 @@ use_gui: true
 resultFolder: /home/felipe-inostroza/euroc_results/V2_02_medium
 eurocFolder: /run/media/felipe-inostroza/KINGSTON/euroc_dataset/V2_02_medium
 eurocTimestampsFilename: /run/media/felipe-inostroza/KINGSTON/euroc_dataset/EuRoC_TimeStamps/V202.txt
-stereo_init_max_depth: 60.0
+stereo_init_min_disparity: 3.0
+useRectifiedIntrinsics: true
 
 #isam2 params
 relinearizeThreshold : 0.02

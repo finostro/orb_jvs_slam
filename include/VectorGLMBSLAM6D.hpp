@@ -316,7 +316,7 @@ void print_map(const MapType & m)
 
 			double stereo_baseline;
 			double stereo_baseline_f;
-			double stereo_init_max_depth;
+			double stereo_init_min_disparity;
 
 			Sophus::SE3<float> pose_left_to_right, pose_right_to_left;
 			Eigen::Matrix<float, 3, 3> rotation_matrix_left_to_right;
@@ -352,6 +352,7 @@ void print_map(const MapType & m)
 			int tbbMaxThreads_ = 0; /**< >0: cap TBB (iSAM2's internal parallelism) at this many threads */
 			double fovCacheTol_ = 0; /**< >0: updateFoV reuses pose/landmark visibility while they move less than this (m, and rad-ish) */
 			bool fovCacheVerify_ = false; /**< check every cached updateFoV against the full computation and abort on mismatch */
+			bool useRectifiedIntrinsics_ = false; /**< use the rectified camera matrix P1, not the raw calibration, for projection and unprojection */
 			bool fovFreezeOld_ = false; /**< with fovCacheTol: stop re-testing visibility from keyposes before minpose (changes results) */
 		} config;
 
@@ -1367,6 +1368,8 @@ void print_map(const MapType & m)
 			config.fovCacheTol_ = node["fovCacheTol"].as<double>();
 		if (node["fovCacheVerify"])
 			config.fovCacheVerify_ = node["fovCacheVerify"].as<bool>();
+		if (node["useRectifiedIntrinsics"])
+			config.useRectifiedIntrinsics_ = node["useRectifiedIntrinsics"].as<bool>();
 		if (node["fovFreezeOld"])
 			config.fovFreezeOld_ = node["fovFreezeOld"].as<bool>();
 
@@ -1540,6 +1543,21 @@ void print_map(const MapType & m)
 									config.camera_parameters_[1].newImSize, CV_32F,
 									config.camera_parameters_[1].M1, config.camera_parameters_[1].M2);
 
+		if (config.useRectifiedIntrinsics_)
+		{
+			config.camera_parameters_[0].fx = P1.at<double>(0, 0);
+			config.camera_parameters_[0].fy = P1.at<double>(1, 1);
+			config.camera_parameters_[0].cx = P1.at<double>(0, 2);
+			config.camera_parameters_[0].cy = P1.at<double>(1, 2);
+			config.stereo_baseline_f = config.stereo_baseline * config.camera_parameters_[0].fx;
+			config.cam_params = std::make_shared<gtsam::Cal3_S2Stereo>(config.camera_parameters_[0].fx,
+																		config.camera_parameters_[0].fy,
+																		0,
+																		config.camera_parameters_[0].cx,
+																		config.camera_parameters_[0].cy,
+																		config.stereo_baseline);
+		}
+
         
         std::cout << "config.camera_parameters_[1].cv_c0_to_camera: "
 				  << config.camera_parameters_[1].cv_c0_to_camera << "\n";    
@@ -1578,7 +1596,7 @@ void print_map(const MapType & m)
 		config.orb_extractor.nLevels = node["ORBextractor.nLevels"].as<int>();
 		config.orb_extractor.iniThFAST = node["ORBextractor.iniThFAST"].as<int>();
 		config.orb_extractor.minThFAST = node["ORBextractor.minThFAST"].as<int>();
-		config.stereo_init_max_depth = node["stereo_init_max_depth"].as<double>();
+		config.stereo_init_min_disparity = node["stereo_init_min_disparity"].as<double>();
 
 		mpORBextractorLeft = new ORB_SLAM3::ORBextractor(
 			config.orb_extractor.nFeatures, config.orb_extractor.scaleFactor,
@@ -4522,12 +4540,13 @@ void print_map(const MapType & m)
 										 Eigen::Vector3d &trans_xyz)
 	{
 
-		trans_xyz[2] = config.stereo_baseline_f / (stereo_point.uL() -stereo_point.uR() );
+		double disparity = stereo_point.uL() - stereo_point.uR();
+		trans_xyz[2] = config.stereo_baseline_f / disparity;
 		trans_xyz[0] = (stereo_point.uL() - config.camera_parameters_[0].cx) * trans_xyz[2] / config.camera_parameters_[0].fx;
 		trans_xyz[1] = (stereo_point.v() - config.camera_parameters_[0].cy) * trans_xyz[2] / config.camera_parameters_[0].fy;
 
 
-		if (trans_xyz[2] > config.stereo_init_max_depth || trans_xyz[2] < 0 || trans_xyz[2] != trans_xyz[2])
+		if (!(disparity >= config.stereo_init_min_disparity))
 		{
 			return false;
 		}
