@@ -21,7 +21,7 @@ tempFactor: 0.995
 initTemp: 1000
 birthDeathNumIter: 1
 crossoverNumIter: 13300
-numPosesToOptimize: 15
+numPosesToOptimize: 10
 
 doCrossover: false
 

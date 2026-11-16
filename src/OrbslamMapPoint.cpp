@@ -43,7 +43,7 @@ namespace rfs
 
 	int OrbslamMapPoint::predictScale(double dist, OrbslamPose *pPose)
 	{
-		double ratio = mfMaxDistance/dist;
+		double ratio = mfScaleRefDistance/dist;
 		int nScale = ceil(log(ratio)/pPose->mfLogScaleFactor);
 		if(nScale<0)
 			nScale = 0;

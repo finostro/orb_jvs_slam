@@ -93,7 +93,7 @@ struct FovCache {
 	struct Ref {
 		bool valid = false;
 		Eigen::Vector3d p0, n0;
-		float minD0, maxD0;
+		float minD0, maxD0, refD0;
 	};
 	std::vector<Row> rows;	   /**< by pose index */
 	std::vector<Ref> lms;	   /**< by landmark index */
@@ -138,13 +138,14 @@ struct VectorGLMBComponent6D {
 
 	std::vector<OrbslamPose> poses_;
 	std::vector<OrbslamPose*> keyposes_;
-	std::vector<OdometryEdge::shared_ptr> odometries_;
+	std::vector<gtsam::NoiseModelFactor::shared_ptr> odometries_;
 	boost::bimap<int , int > odometry_indices;
 	
 	std::vector<OrbslamMapPoint> landmarks_;
 	std::vector<double> landmarksResetProb_, landmarksInitProb_;
 
 	boost::bimap<std::array<int , 3>, int > landmark_edge_indices;
+	std::vector<char> lmInGraph; /**< maxRelDepthSigma: per landmark, whether it has been admitted to iSAM2 */
 
 	double logweight_ = -std::numeric_limits<double>::infinity(),
 			prevLogWeight_ = -std::numeric_limits<double>::infinity();

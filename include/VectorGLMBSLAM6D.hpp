@@ -37,6 +37,7 @@
 #include <Eigen/Core>
 #include <math.h>
 #include <vector>
+#include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -49,6 +50,7 @@
 #include "OrbslamMapPoint.hpp"
 #include "OrbslamPose.hpp"
 #include "VectorGLMBComponent6D.hpp"
+#include "MotionPriorFactor.hpp"
 
 
 
@@ -205,6 +207,7 @@ void print_map(const MapType & m)
 
 		return dist;
 	}
+	inline uint64_t daHash(const VectorGLMBComponent6D::BimapType &da);
 	inline double dist2loglikelihood(int d){
 		double dd=d/255.0;
 		static  double a = std::log(1.0/8.0);
@@ -352,6 +355,20 @@ void print_map(const MapType & m)
 			int tbbMaxThreads_ = 0; /**< >0: cap TBB (iSAM2's internal parallelism) at this many threads */
 			double fovCacheTol_ = 0; /**< >0: updateFoV reuses pose/landmark visibility while they move less than this (m, and rad-ish) */
 			bool fovCacheVerify_ = false; /**< check every cached updateFoV against the full computation and abort on mismatch */
+			bool predictScale_ = false; /**< predict landmark scale from distance; otherwise every prediction is 0 (mfLogScaleFactor unset, associated landmarks skipped) */
+			bool predictScaleNoMargin_ = false; /**< with predictScale: predict from distance*scale without the 1.8 margin of mfMaxDistance */
+			std::string motionModel_ = "brownian"; /**< odometry prior: brownian, cv, ca or cj. odomInfo is the information of the chosen model's one-frame residual */
+			double accelerationDampingTime_ = 0; /**< with ca: acceleration decays as exp(-t/this); <=0 is undamped */
+			size_t visitedMaxEntries_ = 0; /**< >0: keep at most this many visited_ entries, dropping the lowest weights */
+			double isamDogleg_ = 0; /**< >0: iSAM2 uses Powell's dogleg with this initial trust-region radius instead of Gauss-Newton */
+			bool rebuildIsamOnResample_ = false; /**< when a component is given a hypothesis its iSAM2 does not hold, rebuild the iSAM2 from that hypothesis instead of updating the old one */
+			double maxRelDepthSigma_ = 0; /**< >0: a landmark gets stereo factors in iSAM2 only once its associated measurements fix its position to this fraction of its depth; until then it rides on its birth pose and is weighted outside iSAM2 */
+			bool fullWindowAtEnd_ = true; /**< once the last pose is covered, sample data association over the whole trajectory instead of the sliding window */
+			size_t isamCacheSize_ = 0; /**< >0: keep the iSAM2 state of this many highest-weight hypotheses and hand it to components that are given one of them */
+			size_t dumpIndeterminate_ = 0; /**< >0: write the factors around the variable of this many iSAM2 indeterminate-system exceptions to resultFolder/indet.txt */
+			size_t dumpStallTop_ = 0; /**< >0: at the end of run() write the trajectories of this many highest-weight hypotheses evaluated since coverage last advanced */
+			bool isamUnconstrainedOrdering_ = false; /**< plain COLAMD: drop iSAM2's default constraint that puts newly observed variables last */
+			bool eliminateLandmarksFirst_ = false; /**< constrain iSAM2 to eliminate landmarks before poses */
 			bool useRectifiedIntrinsics_ = false; /**< use the rectified camera matrix P1, not the raw calibration, for projection and unprojection */
 			bool fovFreezeOld_ = false; /**< with fovCacheTol: stop re-testing visibility from keyposes before minpose (changes results) */
 		} config;
@@ -432,6 +449,211 @@ void print_map(const MapType & m)
 
 		void updateDescriptors(VectorGLMBComponent6D &c);
 		void perturbTraj(VectorGLMBComponent6D &c);
+
+		/** dumpIndeterminate: describe the variable named by an indeterminate-system exception and every factor on it */
+		void dumpIndeterminate(VectorGLMBComponent6D &c, const std::exception &e)
+		{
+			auto ie = dynamic_cast<const gtsam::IndeterminantLinearSystemException *>(&e);
+			if (!ie || config.dumpIndeterminate_ == 0)
+				return;
+			#pragma omp critical(dumpIndet)
+			if (indetDumped_ < config.dumpIndeterminate_)
+			{
+				indetDumped_++;
+				std::ofstream f(config.resultFolder + "/indet.txt", std::ios::app);
+				f << std::setprecision(6);
+				gtsam::Key key = ie->nearbyVariable();
+				const auto &lin = c.isam->getLinearizationPoint();
+				const auto &factors = c.isam->getFactorsUnsafe();
+				std::map<gtsam::Key, std::pair<int, int>> count; // per variable: stereo factors, other factors
+				for (const auto &fac : factors)
+					if (fac)
+						for (gtsam::Key q : fac->keys())
+							(std::dynamic_pointer_cast<StereoMeasurementEdge>(fac) ? count[q].first : count[q].second)++;
+				f << "iteration " << iteration_ << " window " << minpose_ << " " << maxpose_ << " key " << key << " numPoses " << c.poses_.size()
+				  << " inLin " << lin.exists(key) << " stereo " << count[key].first << " other " << count[key].second
+				  << " newEdges " << c.new_edges.size() << " removed " << c.removed_edges.size() << "\n";
+				bool isLm = key >= c.poses_.size();
+				if (lin.exists(key))
+					f << "  value " << (isLm ? lin.at<gtsam::Point3>(key).transpose() : lin.at<gtsam::Pose3>(key).translation().transpose()) << "\n";
+				for (const auto &fac : factors)
+				{
+					if (!fac || std::find(fac->keys().begin(), fac->keys().end(), key) == fac->keys().end())
+						continue;
+					auto st = std::dynamic_pointer_cast<StereoMeasurementEdge>(fac);
+					if (!st)
+					{
+						f << "  other keys";
+						for (gtsam::Key q : fac->keys())
+							f << " " << q;
+						f << "\n";
+						continue;
+					}
+					gtsam::Key k = st->keys()[0], l = st->keys()[1];
+					f << "  stereo pose " << k << " lm " << l << " z " << st->measured().uL() << " " << st->measured().uR() << " " << st->measured().v()
+					  << " poseFactors " << count[k].first << "+" << count[k].second << " lmFactors " << count[l].first;
+					if (lin.exists(k) && lin.exists(l))
+						f << " pCam " << lin.at<gtsam::Pose3>(k).transformTo(lin.at<gtsam::Point3>(l)).transpose() << " err " << st->error(lin);
+					// state before this update: what the sampler used (poses_/landmarks_) and the last iSAM2 estimate
+					const auto &lm = c.landmarks_[l - c.landmarks_[0].id];
+					bool isNew = false;
+					for (const auto &ne : c.new_edges)
+						isNew |= ne == fac;
+					f << " newEdge " << isNew << " newLm " << c.new_nodes.exists(l) << " newPose " << c.new_nodes.exists(k) << " birth " << lm.birthTime_
+					  << " zSampler " << c.poses_[k].pose.transformTo(lm.position).z();
+					if (c.current_estimate.exists(k) && c.current_estimate.exists(l))
+						f << " zPrevEst " << c.current_estimate.at<gtsam::Pose3>(k).transformTo(c.current_estimate.at<gtsam::Point3>(l)).z();
+					f << "\n";
+				}
+			}
+		}
+
+		/** with dogleg the estimate must use iSAM2's trust-region step; calculateBestEstimate always takes the full Gauss-Newton step */
+		gtsam::Values isamEstimate(VectorGLMBComponent6D &c)
+		{
+			return config.isamDogleg_ > 0 ? c.isam->calculateEstimate() : c.isam->calculateBestEstimate();
+		}
+
+		/** information on a landmark's position from its associated stereo measurements, poses held fixed; minDepth is its smallest depth in those cameras */
+		Eigen::Matrix3d landmarkInfo(VectorGLMBComponent6D &c, const OrbslamMapPoint &lm, double &minDepth)
+		{
+			Eigen::Matrix3d info = Eigen::Matrix3d::Zero();
+			minDepth = std::numeric_limits<double>::infinity();
+			for (int k : lm.is_detected)
+			{
+				gtsam::Matrix36 Hpose;
+				gtsam::Matrix3 J;
+				try
+				{
+					gtsam::StereoCamera(c.poses_[k].pose, config.cam_params).project2(lm.position, Hpose, J);
+				}
+				catch (const gtsam::StereoCheiralityException &)
+				{
+					continue;
+				}
+				info += J.transpose() * config.stereoInfo_ * J;
+				minDepth = std::min(minDepth, c.poses_[k].pose.transformTo(lm.position).z());
+			}
+			return info;
+		}
+
+		/** maxRelDepthSigma: true while lm is associated but kept out of iSAM2 */
+		bool lmGated(const VectorGLMBComponent6D &c, const OrbslamMapPoint &lm) const
+		{
+			if (config.maxRelDepthSigma_ <= 0 || lm.numDetections_ == 0)
+				return false;
+			size_t i = lm.id - c.landmarks_[0].id;
+			return i >= c.lmInGraph.size() || !c.lmInGraph[i];
+		}
+
+		/** maxRelDepthSigma: admit landmarks whose position is determined, and drop admitted ones the optimiser has moved to where it is not (twice the threshold, to avoid flipping) */
+		void updateLmGate(VectorGLMBComponent6D &c)
+		{
+			c.lmInGraph.resize(c.landmarks_.size(), 0);
+			const int id0 = c.landmarks_[0].id;
+			for (const auto &edge : c.landmark_edge_indices.left)
+				c.lmInGraph[edge.first[2] - id0] = 1;
+			for (auto &lm : c.landmarks_)
+			{
+				char &in = c.lmInGraph[lm.id - id0];
+				if (lm.numDetections_ == 0)
+				{
+					in = 0;
+					continue;
+				}
+				double minDepth;
+				Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(landmarkInfo(c, lm, minDepth), Eigen::EigenvaluesOnly);
+				double minInfo = eig.eigenvalues()[0];
+				bool was = in;
+				in = minInfo > 0 && 1 / std::sqrt(minInfo) < (in ? 2 : 1) * config.maxRelDepthSigma_ * minDepth;
+				if (was && !in)
+					lmDemoted_++;
+			}
+		}
+
+		/** empty the iSAM2 of c but keep its data association, so the next updateGraph adds every factor and value again */
+		void resetIsam(VectorGLMBComponent6D &c)
+		{
+			c.isam = std::make_shared<gtsam::ISAM2>(config.isam2_parameters);
+			c.landmark_edge_indices.clear();
+			c.removed_edges.clear();
+			c.odometry_indices.clear();
+			for (auto &pose : c.poses_)
+				for (auto &z : pose.Z_)
+					z.reset();
+			c.new_edges.resize(0);
+			c.new_nodes.clear();
+			c.new_edges.addPrior(0, c.initial_pose, config.odom_noise);
+			c.new_nodes.insert(0, c.initial_pose);
+			c.isam_result = isamUpdate(c);
+			c.current_estimate = c.new_nodes;
+		}
+
+		/** make the iSAM2 of c match the hypothesis it was just given; heldHash is the daHash c had before */
+		void syncIsamOnResample(VectorGLMBComponent6D &c, uint64_t heldHash)
+		{
+			uint64_t hash = daHash(c.DA_bimap_);
+			if (hash == heldHash)
+			{
+				resampleHeld_++;
+				return;
+			}
+			auto cached = isamCache_.find(hash);
+			if (cached != isamCache_.end())
+			{
+				resampleCached_++;
+				c.isam = std::make_shared<gtsam::ISAM2>(*cached->second.isam);
+				c.current_estimate = cached->second.estimate;
+				c.odometry_indices = cached->second.odometry_indices;
+				c.landmark_edge_indices = cached->second.landmark_edge_indices;
+				c.removed_edges.clear();
+				// updateGraph looks the factors up again through landmark_edge_indices
+				for (auto &pose : c.poses_)
+					for (auto &z : pose.Z_)
+						z.reset();
+			}
+			else if (config.rebuildIsamOnResample_)
+			{
+				resampleRebuilt_++;
+				resetIsam(c);
+			}
+			else
+				resampleStale_++;
+		}
+
+		/** isam update with the pending edges and nodes of c */
+		gtsam::ISAM2Result isamUpdate(VectorGLMBComponent6D &c)
+		{
+			if (config.isamUnconstrainedOrdering_)
+				return c.isam->update(c.new_edges, c.new_nodes, c.removed_edges, gtsam::FastMap<gtsam::Key, int>());
+			if (!config.eliminateLandmarksFirst_)
+				return c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
+			// poses go last in the elimination order, so a pose seen with many landmarks does not fill in a dense block over them
+			// only poses that still have factors after this update may be constrained
+			std::vector<int> numFactors(c.poses_.size(), 0);
+			const auto &index = c.isam->getVariableIndex();
+			for (int k = 0; k < c.poses_.size(); k++)
+			{
+				auto it = index.find(k);
+				if (it != index.end())
+					numFactors[k] = it->second.size();
+			}
+			const auto &factors = c.isam->getFactorsUnsafe();
+			for (auto i : c.removed_edges)
+				for (auto key : factors[i]->keys())
+					if (key < c.poses_.size())
+						numFactors[key]--;
+			for (auto &f : c.new_edges)
+				for (auto key : f->keys())
+					if (key < c.poses_.size())
+						numFactors[key]++;
+			gtsam::FastMap<gtsam::Key, int> groups;
+			for (int k = 0; k < c.poses_.size(); k++)
+				if (numFactors[k] > 0)
+					groups[k] = 1;
+			return c.isam->update(c.new_edges, c.new_nodes, c.removed_edges, groups);
+		}
+
 		/**
 		 * Computes the stereo matches in the orb measurements stored in c
 		 * @param pose an orbslam pose with keypoints and descriptors
@@ -471,6 +693,7 @@ void print_map(const MapType & m)
 		void updateFoV(VectorGLMBComponent6D &c);
 		void updateFoVFull(VectorGLMBComponent6D &c);
 		void updateFoVCached(VectorGLMBComponent6D &c);
+		int associatedScale(VectorGLMBComponent6D &c, int k, int lm);
 
 		/**
 		 * update descriptor and viewing angle according to associations
@@ -621,6 +844,21 @@ void print_map(const MapType & m)
 		// hashes and weights of entries dropped by visitedPruneLogRatio that the maxWeightDifference
 		// rule would still keep; re-inserting one is refused as if the entry were still in visited_
 		std::unordered_map<uint64_t, double> visitedTombstones_;
+		std::map<double, std::vector<StampedPose>> stallTop_; /**< dumpStallTop: best hypotheses since coverage last advanced, by weight */
+		int stallTopCover_ = -1;
+		size_t indetDumped_ = 0;
+		/** iSAM2 and its factor-index bookkeeping for one hypothesis */
+		struct IsamState
+		{
+			double weight;
+			std::shared_ptr<gtsam::ISAM2> isam;
+			gtsam::Values estimate;
+			boost::bimap<int, int> odometry_indices;
+			boost::bimap<std::array<int, 3>, int> landmark_edge_indices;
+		};
+		std::unordered_map<uint64_t, IsamState> isamCache_; /**< isamCacheSize: by daHash of the hypothesis */
+		size_t resampleHeld_ = 0, resampleCached_ = 0, resampleRebuilt_ = 0, resampleStale_ = 0;
+		std::atomic<size_t> lmDemoted_{0}, lmGatedLast_{0}; /**< gate_stats.csv: landmarks dropped from iSAM2 so far, gated landmarks in the last weighted component */
 		
 		EstimateWeight gt_est;
 		double startingStamp;
@@ -878,6 +1116,29 @@ void print_map(const MapType & m)
 			}
 		}
 
+		if (config.visitedMaxEntries_ > 0 && visited_.size() > config.visitedMaxEntries_)
+		{
+			// drop the lowest weights down to the cap
+			std::vector<double> weights;
+			weights.reserve(visited_.size());
+			for (auto &v : visited_)
+				weights.push_back(v.second.weight);
+			size_t numDrop = visited_.size() - config.visitedMaxEntries_;
+			std::nth_element(weights.begin(), weights.begin() + numDrop - 1, weights.end());
+			double threshold = weights[numDrop - 1];
+			for (auto it = visited_.begin(); it != visited_.end() && numDrop > 0;)
+			{
+				if (it->second.weight <= threshold)
+				{
+					visitedTombstones_[daHash(it->first)] = it->second.weight;
+					it = visited_.erase(it);
+					numDrop--;
+				}
+				else
+					++it;
+			}
+		}
+
 		// do logsumexp on the components to calculate probabilities
 
 		std::map<double, std::map<rfs::VectorGLMBComponent6D::BimapType, rfs::EstimateWeight>::iterator > probs_to_iterator;
@@ -913,12 +1174,36 @@ void print_map(const MapType & m)
 		double r1 = dist(randomGenerators_[0]);
 		double r2 = dist(randomGenerators_[0]);
 		int j = 0;
+		std::vector<uint64_t> heldHash; // diagnostic: hypotheses the components hold before this resample
+		if (config.dumpIndeterminate_ > 0)
+			for (auto &c : components_)
+				heldHash.push_back(daHash(c.DA_bimap_));
 		for (int i = 0; i < components_.size(); i++)
 		{
 			auto &c = components_[i];
 			auto  da1 = probs_to_iterator.lower_bound(r1)->second;
 			auto  da2 = probs_to_iterator.lower_bound(r2)->second;
+			if (config.dumpIndeterminate_ > 0)
+			{
+				// diagnostic: associations that differ between the component's DA (what its iSAM2 holds) and the one it is given
+				int removed = 0, added = 0, kept = 0;
+				for (int k = 0; k < c.DA_bimap_.size() && k < da1->first.size(); k++)
+				{
+					for (const auto &a : c.DA_bimap_[k].left)
+					{
+						auto f = da1->first[k].left.find(a.first);
+						(f != da1->first[k].left.end() && f->second == a.second) ? kept++ : removed++;
+					}
+					added += da1->first[k].size();
+				}
+				added -= kept;
+				std::ofstream(config.resultFolder + "/resample.csv", std::ios::app)
+					<< iteration_ << "," << i << "," << removed << "," << added << "," << kept << ","
+					<< (std::find(heldHash.begin(), heldHash.end(), daHash(da1->first)) != heldHash.end()) << "\n";
+			}
 
+			bool syncIsam = config.rebuildIsamOnResample_ || config.isamCacheSize_ > 0;
+			uint64_t heldBefore = syncIsam ? daHash(c.DA_bimap_) : 0;
 			if (config.doCrossover){
 				auto da = sexyTime(da1->first , da2->first);
 				// add data association j to component i
@@ -926,6 +1211,8 @@ void print_map(const MapType & m)
 			}else{
 				changeDA(c, da1->first);
 			}
+			if (syncIsam)
+				syncIsamOnResample(c, heldBefore);
 			
 			for(int k = 0 ; k < c.poses_.size() ; k++){
 
@@ -973,6 +1260,13 @@ void print_map(const MapType & m)
 				}else{
 					c.landmarks_[keyValue.key-c.landmarks_[0].id].position = keyValue.value.cast<PointType>();
 				}
+			}
+			if (config.maxRelDepthSigma_ > 0)
+			{
+				// the hypothesis stores a position only for landmarks that were in its iSAM2
+				c.lmInGraph.assign(c.landmarks_.size(), 0);
+				for (auto &lm : c.landmarks_)
+					c.lmInGraph[lm.id - c.landmarks_[0].id] = da1->second.estimate.exists(lm.id);
 			}
 
 			// std::cout  << "sample w: " << da1->second.weight << " j " << j  << " r " << r1 <<" prob "  << probs[j]<< "\n";
@@ -1141,6 +1435,11 @@ void print_map(const MapType & m)
 
 		pose.mvScaleFactors = mpORBextractorLeft->GetScaleFactors();
 		pose.mnScaleLevels = mpORBextractorLeft->GetLevels();
+		if (config.predictScale_)
+		{
+			pose.mfScaleFactor = mpORBextractorLeft->GetScaleFactor();
+			pose.mfLogScaleFactor = std::log(pose.mfScaleFactor);
+		}
 
 		static constexpr int thOrbDist = (orb_th_high + orb_th_low) / 2;
 
@@ -1368,6 +1667,37 @@ void print_map(const MapType & m)
 			config.fovCacheTol_ = node["fovCacheTol"].as<double>();
 		if (node["fovCacheVerify"])
 			config.fovCacheVerify_ = node["fovCacheVerify"].as<bool>();
+		if (node["predictScale"])
+			config.predictScale_ = node["predictScale"].as<bool>();
+		if (node["visitedMaxEntries"])
+			config.visitedMaxEntries_ = node["visitedMaxEntries"].as<size_t>();
+		if (node["rebuildIsamOnResample"])
+			config.rebuildIsamOnResample_ = node["rebuildIsamOnResample"].as<bool>();
+		if (node["maxRelDepthSigma"])
+			config.maxRelDepthSigma_ = node["maxRelDepthSigma"].as<double>();
+		if (node["fullWindowAtEnd"])
+			config.fullWindowAtEnd_ = node["fullWindowAtEnd"].as<bool>();
+		if (node["isamCacheSize"])
+			config.isamCacheSize_ = node["isamCacheSize"].as<size_t>();
+		if (node["dumpIndeterminate"])
+			config.dumpIndeterminate_ = node["dumpIndeterminate"].as<size_t>();
+		if (node["dumpStallTop"])
+			config.dumpStallTop_ = node["dumpStallTop"].as<size_t>();
+		if (node["isamUnconstrainedOrdering"])
+			config.isamUnconstrainedOrdering_ = node["isamUnconstrainedOrdering"].as<bool>();
+		if (node["eliminateLandmarksFirst"])
+			config.eliminateLandmarksFirst_ = node["eliminateLandmarksFirst"].as<bool>();
+		if (node["motionModel"])
+			config.motionModel_ = node["motionModel"].as<std::string>();
+		if (config.motionModel_ != "brownian" && config.motionModel_ != "cv" && config.motionModel_ != "ca" && config.motionModel_ != "cj")
+		{
+			std::cerr << "unknown motionModel " << config.motionModel_ << "\n";
+			exit(1);
+		}
+		if (node["accelerationDampingTime"])
+			config.accelerationDampingTime_ = node["accelerationDampingTime"].as<double>();
+		if (node["predictScaleNoMargin"])
+			config.predictScaleNoMargin_ = node["predictScaleNoMargin"].as<bool>();
 		if (node["useRectifiedIntrinsics"])
 			config.useRectifiedIntrinsics_ = node["useRectifiedIntrinsics"].as<bool>();
 		if (node["fovFreezeOld"])
@@ -1388,6 +1718,10 @@ void print_map(const MapType & m)
 		config.isam2_parameters.findUnusedFactorSlots = true; 
 		config.isam2_parameters.factorization = gtsam::ISAM2Params::Factorization::CHOLESKY ;
 		config.isam2_parameters.enablePartialRelinearizationCheck = node["enablePartialRelinearizationCheck"].as<bool>();
+		if (node["isamDogleg"])
+			config.isamDogleg_ = node["isamDogleg"].as<double>();
+		if (config.isamDogleg_ > 0)
+			config.isam2_parameters.optimizationParams = gtsam::ISAM2DoglegParams(config.isamDogleg_);
 
 
 		if (!YAML::convert<Eigen::Matrix3d>::decode(node["anchorInfo"],
@@ -1691,7 +2025,7 @@ void print_map(const MapType & m)
 			}
 
 			
-			if (best_DA_max_detection_time_ == components_[0].poses_.size() - 1)
+			if (config.fullWindowAtEnd_ && best_DA_max_detection_time_ == components_[0].poses_.size() - 1)
 			{
 				minpose_ = 0;
 			}
@@ -1711,6 +2045,32 @@ void print_map(const MapType & m)
 					  << best_DA_max_detection_time_ << "  " << minpose_ << "\n";
 			std::cout << "iteration: " << iteration_ << " / " << numSteps << "\n";
 			optimize(config.numLevenbergIterations_);
+			if (config.rebuildIsamOnResample_ || config.isamCacheSize_ > 0)
+				std::ofstream(config.resultFolder + "/resample_stats.txt")
+					<< "iteration " << iteration_ << " held " << resampleHeld_ << " cached " << resampleCached_
+					<< " rebuilt " << resampleRebuilt_ << " stale " << resampleStale_ << " cacheSize " << isamCache_.size() << "\n";
+			if (config.maxRelDepthSigma_ > 0)
+				std::ofstream(config.resultFolder + "/gate_stats.csv", std::ios::app)
+					<< iteration_ << "," << lmDemoted_ << "," << lmGatedLast_ << "\n";
+		}
+		if (config.dumpStallTop_ > 0)
+		{
+			std::ofstream weights(config.resultFolder + "/visited_weights.txt");
+			weights << std::setprecision(17);
+			size_t r = 0;
+			for (auto top = stallTop_.rbegin(); top != stallTop_.rend(); ++top, ++r)
+			{
+				weights << r << " " << top->first << "\n";
+				std::ofstream file(config.resultFolder + "/visited_" + std::to_string(r) + ".tum");
+				file << std::setprecision(20);
+				for (int k = 0; k < maxpose_ && k < (int)top->second.size(); k++)
+				{
+					PoseType p = top->second[k].pose * config.base_link_to_cam0_se3.inverse();
+					auto q = p.rotation().toQuaternion();
+					file << components_[0].poses_[k].stamp << " " << p.translation().x() << " " << p.translation().y() << " "
+						 << p.translation().z() << " " << q.x() << " " << q.y() << " " << q.z() << " " << q.w() << "\n";
+				}
+			}
 		}
 	}
 
@@ -1831,8 +2191,8 @@ void print_map(const MapType & m)
 
 			updateGraph(c);
 
-			c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
-			c.current_estimate = c.isam->calculateBestEstimate();
+			c.isam_result = isamUpdate(c);
+			c.current_estimate = isamEstimate(c);
 			loadEstimate(c);
 
 
@@ -2099,8 +2459,9 @@ void print_map(const MapType & m)
 					checkGraph(c);
 
 					try{
-					c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
+					c.isam_result = isamUpdate(c);
 					}catch(const std::exception& e){
+						dumpIndeterminate(c, e);
 						std::cout << termcolor::red <<  e.what();
 						//std::cout << "caught exception saving graph to graph.isam \n";
 						//gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateBestEstimate(), "graph.isam"	);
@@ -2113,7 +2474,7 @@ void print_map(const MapType & m)
 						continue;
 						
 					}
-					c.current_estimate = c.isam->calculateBestEstimate();
+					c.current_estimate = isamEstimate(c);
 					loadEstimate(c);
 
 					moveBirth(c);
@@ -2168,12 +2529,13 @@ void print_map(const MapType & m)
 			checkGraph(c);
 
 			try{
-				c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
+				c.isam_result = isamUpdate(c);
 				for(int isam_i = 0; isam_i < config.numLevenbergIterations_; isam_i++){
 					c.isam->update();
 				}
 			
 			}catch(const std::exception& e){
+					dumpIndeterminate(c, e);
 					std::cout << termcolor::red <<  e.what();
 					std::cout << "caught exception saving graph to graph.isam \n";
 					//gtsam::writeG2o 	( c.isam->getFactorsUnsafe() ,c.isam->calculateBestEstimate(), "graph.isam"	);
@@ -2187,7 +2549,7 @@ void print_map(const MapType & m)
 					continue;
 			}
 			
-			c.current_estimate = c.isam->calculateBestEstimate();
+			c.current_estimate = isamEstimate(c);
 			
 			
 			loadEstimate(c);
@@ -2215,7 +2577,7 @@ void print_map(const MapType & m)
 				c.poses_[numpose].pose = c.poses_[max_detection_time_].pose;
 			}
 			auto pair = std::make_pair(c.DA_bimap_, to_insert);
-			uint64_t pairHash = config.visitedPruneLogRatio_ > 0 ? daHash(pair.first) : 0;
+			uint64_t pairHash = (config.visitedPruneLogRatio_ > 0 || config.visitedMaxEntries_ > 0 || config.isamCacheSize_ > 0) ? daHash(pair.first) : 0;
 
 
 			for ( int numpose =minpose_+1 ; numpose < maxpose_; numpose++){
@@ -2250,8 +2612,39 @@ void print_map(const MapType & m)
 			{
 			}
 
+			// isamCacheSize: copy the solver outside the critical section, only when it will enter the cache
+			auto cacheMin = [this]() {
+				auto m = isamCache_.begin();
+				for (auto e = isamCache_.begin(); e != isamCache_.end(); ++e)
+					if (e->second.weight < m->second.weight)
+						m = e;
+				return m;
+			};
+			bool cacheState = false;
+			IsamState state;
+			if (config.isamCacheSize_ > 0)
+			{
+				#pragma omp critical(bestweight)
+				cacheState = !isamCache_.count(pairHash) && (isamCache_.size() < config.isamCacheSize_ || c.logweight_ > cacheMin()->second.weight);
+				if (cacheState)
+					state = {c.logweight_, std::make_shared<gtsam::ISAM2>(*c.isam), c.current_estimate, c.odometry_indices, c.landmark_edge_indices};
+			}
+
 			#pragma omp critical(bestweight)
 			{
+				if (cacheState && isamCache_.emplace(pairHash, std::move(state)).second && isamCache_.size() > config.isamCacheSize_)
+					isamCache_.erase(cacheMin());
+				if (config.dumpStallTop_ > 0)
+				{
+					if (best_DA_max_detection_time_ != stallTopCover_)
+					{
+						stallTop_.clear();
+						stallTopCover_ = best_DA_max_detection_time_;
+					}
+					stallTop_.emplace(c.logweight_, to_insert.trajectory);
+					if (stallTop_.size() > config.dumpStallTop_)
+						stallTop_.erase(stallTop_.begin());
+				}
 				if (c.logweight_ > bestWeight_-config.maxWeightDifference){
 					if (!visitedTombstones_.empty() && visitedTombstones_.count(pairHash))
 						inserted = false;
@@ -2461,10 +2854,34 @@ void print_map(const MapType & m)
 			cliques.insert(cliques.end(), clique->children.begin(), clique->children.end());
 		}
 		c.logDetH_ = 2 * logDetR;
+		// maxRelDepthSigma: gated landmarks are not in iSAM2, so add their residuals and Laplace term here, poses held fixed
+		int numGated = 0;
+		if (config.maxRelDepthSigma_ > 0)
+			for (auto &lm : c.landmarks_)
+			{
+				if (!lmGated(c, lm))
+					continue;
+				numGated++;
+				for (int k : lm.is_detected)
+				{
+					auto assoc = c.DA_bimap_[k].right.find(lm.id);
+					if (assoc == c.DA_bimap_[k].right.end())
+						continue;
+					int nz = assoc->second;
+					StereoMeasurementEdge f(c.poses_[k].stereo_points[nz], config.stereo_noise, k, lm.id, config.cam_params);
+					gtsam::Vector e = f.evaluateError(c.poses_[k].pose, lm.position, nullptr, nullptr);
+					chi_logw -= config.stereo_noise->loss(config.stereo_noise->squaredMahalanobisDistance(e));
+				}
+				double minDepth;
+				double det = landmarkInfo(c, lm, minDepth).determinant();
+				if (det > 0)
+					c.logDetH_ += std::log(det);
+			}
+		lmGatedLast_ = numGated;
 		double det_logw = -0.5 * c.logDetH_;
 
 		logw += chi_logw+det_logw;
-		 std::cout << termcolor::blue << "weight: " <<logw << " det_logw: " <<     det_logw  
+		 std::cout << termcolor::blue << "weight: " <<logw << " gated: " << numGated << " det_logw: " <<     det_logw
 		 	<< " pd_logw: " <<     pd_logw  << " kappa_logw: " <<     kappa_logw  
 			<< " info_logw: " <<     info_logw 
 			<< " lm_exist_w: " <<     lm_exist_w 
@@ -2492,7 +2909,10 @@ void print_map(const MapType & m)
 		for (int k = 1; k <= max_detection_time; k++)
 		{
 			auto it = c.odometry_indices.left.find(k-1);
-			if(c.poses_[k-1].isKeypose && c.poses_[k].isKeypose){
+			bool allKeyposes = true;
+			for (auto key : c.odometries_[k-1]->keys())
+				allKeyposes = allKeyposes && c.poses_[key].isKeypose;
+			if(allKeyposes){
 				if (it == c.odometry_indices.left.end() ){
 					c.new_edges.push_back(c.odometries_[k-1]);
 				}
@@ -2505,10 +2925,14 @@ void print_map(const MapType & m)
 		}
 
 
+		const bool gate = config.maxRelDepthSigma_ > 0;
+		if (gate)
+			updateLmGate(c);
+
 		for (int k = 0; k <= max_detection_time; k++)
 		{
 			// odometries
-			
+
 			if (!c.poses_[k].isKeypose){
 				continue;
 			}
@@ -2516,7 +2940,9 @@ void print_map(const MapType & m)
 			for (auto iter = c.DA_bimap_[k].left.begin(), iend = c.DA_bimap_[k].left.end(); iter != iend;
 			 ++iter)
 			{
-			
+				if (gate && !c.lmInGraph[iter->second - c.landmarks_[0].id])
+					continue;
+
 				if (c.poses_[k].Z_[iter->first]){
 					if (c.poses_[k].Z_[iter->first]->key2() == iter->second){
 						// measurement found , it should have an index
@@ -2574,12 +3000,13 @@ void print_map(const MapType & m)
 
 			auto bimap_it = c.DA_bimap_[k].left.find(nz);
 
-			if (bimap_it ==  c.DA_bimap_[k].left.end() || !c.poses_[k].isKeypose ){
+			if (bimap_it ==  c.DA_bimap_[k].left.end() || !c.poses_[k].isKeypose || (gate && !c.lmInGraph[lmid - c.landmarks_[0].id])){
 				c.poses_[k].Z_[nz] = NULL; 
 				c.removed_edges.push_back(it.second);
 			}else{
 				if(bimap_it->second != lmid){
-					if (c.poses_[k].Z_[nz]->keys()[1] == lmid){
+					// Z_ is empty when the measurement moved to a gated landmark after Z_ was reset
+					if (!c.poses_[k].Z_[nz] || c.poses_[k].Z_[nz]->keys()[1] == lmid){
 						c.poses_[k].Z_[nz] = NULL; 
 
 					}else{
@@ -2605,8 +3032,8 @@ void print_map(const MapType & m)
 		}
 
 		for(auto &lm: c.landmarks_){
-			if (lm.numDetections_ > 0 ){
-				
+			if (lm.numDetections_ > 0 && !lmGated(c, lm)){
+
 				if (!c.current_estimate.exists(lm.id)){
 					c.new_nodes.insert(lm.id, lm.position);
 				}
@@ -2779,16 +3206,18 @@ void print_map(const MapType & m)
 			if (p > uni_dist(randomGenerators_[threadnum]))
 			{
 				// reset all associations to false alarms
-				expectedWeightChange += (config.logKappa_ + (1 - config.PD_)) * c.landmarks_[i].numFoV_;
+				expectedWeightChange += std::log(1 - config.PD_) * lm.numFoV_;
 				//int numdet = 0;
 				if (candidateStart.empty())
 					buildCandidates();
+				double birthL = std::numeric_limits<double>::quiet_NaN();
 				for (int e = candidateStart[i], eEnd = candidateStart[i + 1]; e < eEnd;)
 				{
 					int k = candidates[e].k;
 					if ( k == lm.birthPose->id ){
-						while (e < eEnd && candidates[e].k == k)
-							e++;
+						for (; e < eEnd && candidates[e].k == k; e++)
+							if (candidates[e].nz == lm.birthMatch)
+								birthL = candidates[e].l;
 						continue;
 					}
 					double maxl = -std::numeric_limits<double>::infinity();
@@ -2833,6 +3262,8 @@ void print_map(const MapType & m)
 					lm.numDetections_++;
 					lm.is_detected.insert(kbirth);
 					assert(lm.numDetections_ == lm.is_detected.size() );
+					if (std::isfinite(birthL))
+						expectedWeightChange += birthL - config.logKappa_;
 				}else{
 					assert(0);
 				}
@@ -3186,7 +3617,9 @@ void print_map(const MapType & m)
 				int n = std::ceil(q);
 				return n < 0 ? 0 : n >= pose.mnScaleLevels ? pose.mnScaleLevels - 1 : n;
 			};
-			if (level(std::log((maxD - tol) / hi) / lsf - 1e-6) != level(std::log((maxD + tol) / lo) / lsf + 1e-6))
+			if (r.refD0 - tol <= 0)
+				return FRAGILE;
+			if (level(std::log((r.refD0 - tol) / hi) / lsf - 1e-6) != level(std::log((r.refD0 + tol) / lo) / lsf + 1e-6))
 				return FRAGILE;
 			return IN;
 		}
@@ -3721,8 +4154,8 @@ void print_map(const MapType & m)
 
 		
 
-		c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
-		c.current_estimate = c.isam->calculateBestEstimate();
+		c.isam_result = isamUpdate(c);
+		c.current_estimate = isamEstimate(c);
 		loadEstimate(c);
 
 
@@ -3797,6 +4230,7 @@ void print_map(const MapType & m)
 					}
 					avg_depth = avg_depth/map_point.numDetections_;
 					map_point.mfMaxDistance = std::max( 1.8*avg_depth , 1.3*max_depth);
+					map_point.mfScaleRefDistance = config.predictScaleNoMargin_ ? avg_depth : map_point.mfMaxDistance;
 					//assert(map_point.mfMaxDistance<10.0);
 					map_point.mfMinDistance = std::min(map_point.mfMaxDistance / c.poses_[0].mvScaleFactors[ c.poses_[0].mnScaleLevels - 1] * 0.4 , 0.6*min_depth);
 
@@ -3899,6 +4333,14 @@ void print_map(const MapType & m)
 		}
 	}
 
+	inline int VectorGLMBSLAM6D::associatedScale(VectorGLMBComponent6D &c, int k, int lm)
+	{
+		if (!config.predictScale_)
+			return 0;
+		const float dist = c.poses_[k].pose.transformTo(c.landmarks_[lm].position).norm();
+		return c.landmarks_[lm].predictScale(dist, &c.poses_[k]);
+	}
+
 	inline void VectorGLMBSLAM6D::updateFoVFull(VectorGLMBComponent6D &c)
 	{
 		for (auto &map_point : c.landmarks_)
@@ -3936,7 +4378,7 @@ void print_map(const MapType & m)
 						{
 
 							c.poses_[k].fov_.push_back(c.landmarks_[lm].id);
-							c.poses_[k].predicted_scales.push_back(predScale);
+							c.poses_[k].predicted_scales.push_back(associated ? associatedScale(c, k, lm) : predScale);
 							c.landmarks_[lm].numFoV_++;
 							isInFov = true;
 						}
@@ -3988,13 +4430,15 @@ void print_map(const MapType & m)
 			auto &ref = fc.lms[lm];
 			auto &mp = c.landmarks_[lm];
 			if (ref.valid && (mp.position - ref.p0).norm() <= tol && (mp.normalVector - ref.n0).norm() <= tol &&
-				std::abs(mp.mfMinDistance - ref.minD0) <= tol && std::abs(mp.mfMaxDistance - ref.maxD0) <= tol)
+				std::abs(mp.mfMinDistance - ref.minD0) <= tol && std::abs(mp.mfMaxDistance - ref.maxD0) <= tol &&
+				std::abs(mp.mfScaleRefDistance - ref.refD0) <= tol)
 				continue;
 			ref.valid = true;
 			ref.p0 = mp.position;
 			ref.n0 = mp.normalVector;
 			ref.minD0 = mp.mfMinDistance;
 			ref.maxD0 = mp.mfMaxDistance;
+			ref.refD0 = mp.mfScaleRefDistance;
 			fc.changedMark[lm] = s;
 			refreshed.push_back(lm);
 		}
@@ -4083,7 +4527,7 @@ void print_map(const MapType & m)
 			}
 			maxValid = k;
 
-			// associated landmarks are in the FoV with predicted scale 0, as in updateFoVFull
+			// associated landmarks are always in the FoV, as in updateFoVFull
 			assoc.clear();
 			for (auto &a : c.DA_bimap_[k].left)
 			{
@@ -4102,14 +4546,20 @@ void print_map(const MapType & m)
 			for (auto &e : row.e)
 			{
 				while (j < assoc.size() && assoc[j] < e.lm)
-					emit(assoc[j++], 0);
+				{
+					emit(assoc[j], associatedScale(c, k, assoc[j]));
+					j++;
+				}
 				if (j < assoc.size() && assoc[j] == e.lm)
-					emit(assoc[j++], 0);
+				{
+					emit(assoc[j], associatedScale(c, k, assoc[j]));
+					j++;
+				}
 				else if (e.visible && fc.candMark[e.lm] == s)
 					emit(e.lm, e.scale);
 			}
-			while (j < assoc.size())
-				emit(assoc[j++], 0);
+			for (; j < assoc.size(); j++)
+				emit(assoc[j], associatedScale(c, k, assoc[j]));
 		}
 		fc.maxValidRow = maxValid;
 
@@ -4316,6 +4766,7 @@ void print_map(const MapType & m)
 		}
 
 		lm.mfMaxDistance = pose.point_camera_frame[numMatch].norm() * pose.mvScaleFactors[level] * 1.8;
+		lm.mfScaleRefDistance = config.predictScaleNoMargin_ ? lm.mfMaxDistance / 1.8 : lm.mfMaxDistance;
 		lm.mfMinDistance = lm.mfMaxDistance / pose.mvScaleFactors[nLevels - 1] * 0.3;
 		pose.initial_lm_id[numMatch] = newId;
 		//pose.Z_[numMatch]->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(lm.pPoint));
@@ -4404,8 +4855,8 @@ void print_map(const MapType & m)
 
 		for( OrbslamMapPoint &lm:c.landmarks_){
 			
-			if ( lm.numDetections_ == 0){
-				
+			if ( lm.numDetections_ == 0 || lmGated(c, lm)){
+
 
 				Eigen::Vector3d point_world_frame;
 				point_world_frame = lm.birthPose->pose.transformFrom(lm.birthPose->point_camera_frame[lm.birthMatch]);
@@ -4463,10 +4914,36 @@ void print_map(const MapType & m)
 			
 			if (k > 0)
 			{
-				PoseType odometry_pose; // this is just zero odom , meaning brownian motion
-				OdometryEdge::shared_ptr odo = std::make_shared<OdometryEdge>(k-1 , k , odometry_pose , config.odom_noise);
-
-				c.odometries_.push_back(odo);
+				// lower-order model for the first frames, which lack the history
+				std::vector<double> coeffs;
+				if (config.motionModel_ == "cv" && k >= 2)
+					coeffs = {1};
+				else if (config.motionModel_ == "ca" && k >= 2)
+				{
+					double e = 1;
+					if (config.accelerationDampingTime_ > 0)
+						e = std::exp(-(c.poses_[k].stamp - c.poses_[k - 1].stamp) / config.accelerationDampingTime_);
+					if (k >= 3)
+						coeffs = {1 + e, -e};
+					else
+						coeffs = {1};
+				}
+				else if (config.motionModel_ == "cj" && k >= 2)
+				{
+					if (k >= 4)
+						coeffs = {3, -3, 1};
+					else if (k == 3)
+						coeffs = {2, -1};
+					else
+						coeffs = {1};
+				}
+				if (coeffs.empty())
+				{
+					PoseType odometry_pose; // this is just zero odom , meaning brownian motion
+					c.odometries_.push_back(std::make_shared<OdometryEdge>(k-1 , k , odometry_pose , config.odom_noise));
+				}
+				else
+					c.odometries_.push_back(std::make_shared<MotionPriorFactor>(k, coeffs, config.odom_noise));
 
 			}
 
@@ -4529,8 +5006,8 @@ void print_map(const MapType & m)
 		c.new_nodes.insert(0,c.poses_[0].pose);
 		c.new_nodes.insert(1,c.poses_[1].pose);
 
-		c.isam_result = c.isam->update(c.new_edges, c.new_nodes, c.removed_edges);
-		c.current_estimate = c.isam->calculateBestEstimate();
+		c.isam_result = isamUpdate(c);
+		c.current_estimate = isamEstimate(c);
 		loadEstimate(c);
 
 

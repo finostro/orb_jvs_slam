@@ -80,6 +80,7 @@ namespace rfs
         // Scale invariance distances
         float mfMinDistance;
         float mfMaxDistance;
+        float mfScaleRefDistance; /**< predictScale gives level 0 at this distance */
 
         //hessian 
         Eigen::Matrix<double, 3 , 3 > hessian;
