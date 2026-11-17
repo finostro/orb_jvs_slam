@@ -362,6 +362,9 @@ void print_map(const MapType & m)
 			size_t visitedMaxEntries_ = 0; /**< >0: keep at most this many visited_ entries, dropping the lowest weights */
 			double isamDogleg_ = 0; /**< >0: iSAM2 uses Powell's dogleg with this initial trust-region radius instead of Gauss-Newton */
 			bool rebuildIsamOnResample_ = false; /**< when a component is given a hypothesis its iSAM2 does not hold, rebuild the iSAM2 from that hypothesis instead of updating the old one */
+			double pdAngleTau_ = 0; /**< >0: PD = pdAngleA exp(-theta/pdAngleTau) + pdAngleB, theta in degrees between the viewing ray and the landmark normal; PD is then unused */
+			double pdAngleA_ = 0;
+			double pdAngleB_ = 0;
 			double maxRelDepthSigma_ = 0; /**< >0: a landmark gets stereo factors in iSAM2 only once its associated measurements fix its position to this fraction of its depth; until then it rides on its birth pose and is weighted outside iSAM2 */
 			bool fullWindowAtEnd_ = true; /**< once the last pose is covered, sample data association over the whole trajectory instead of the sliding window */
 			size_t isamCacheSize_ = 0; /**< >0: keep the iSAM2 state of this many highest-weight hypotheses and hand it to components that are given one of them */
@@ -537,6 +540,34 @@ void print_map(const MapType & m)
 			return info;
 		}
 
+		double pdFor(const OrbslamPose &pose, const OrbslamMapPoint &lm) const
+		{
+			Eigen::Vector3d ray = (lm.position - pose.pose.translation()).normalized();
+			double deg = std::acos(std::clamp(ray.dot(lm.normalVector), -1.0, 1.0)) * 180.0 / M_PI;
+			return config.pdAngleA_ * std::exp(-deg / config.pdAngleTau_) + config.pdAngleB_;
+		}
+		double fovPD(const OrbslamPose &pose, int fovIdx) const
+		{
+			return config.pdAngleTau_ > 0 ? pose.fov_pd[fovIdx] : config.PD_;
+		}
+		// sum of log(1-PD) over the keyposes that have lm in their FoV
+		double lmLogMiss(const OrbslamMapPoint &lm) const
+		{
+			return config.pdAngleTau_ > 0 ? lm.sumLogMiss_ : lm.numFoV_ * std::log(1 - config.PD_);
+		}
+		// same, leaving out pose
+		double lmLogMissExcept(const OrbslamPose &pose, const OrbslamMapPoint &lm) const
+		{
+			return config.pdAngleTau_ > 0 ? lm.sumLogMiss_ - std::log(1 - pdFor(pose, lm)) : (lm.numFoV_ - 1) * std::log(1 - config.PD_);
+		}
+		void addToFoV(OrbslamPose &pose, OrbslamMapPoint &lm)
+		{
+			if (config.pdAngleTau_ <= 0)
+				return;
+			double pd = pdFor(pose, lm);
+			pose.fov_pd.push_back(pd);
+			lm.sumLogMiss_ += std::log(1 - pd);
+		}
 		/** maxRelDepthSigma: true while lm is associated but kept out of iSAM2 */
 		bool lmGated(const VectorGLMBComponent6D &c, const OrbslamMapPoint &lm) const
 		{
@@ -1675,6 +1706,12 @@ void print_map(const MapType & m)
 			config.rebuildIsamOnResample_ = node["rebuildIsamOnResample"].as<bool>();
 		if (node["maxRelDepthSigma"])
 			config.maxRelDepthSigma_ = node["maxRelDepthSigma"].as<double>();
+		if (node["pdAngleTau"])
+		{
+			config.pdAngleTau_ = node["pdAngleTau"].as<double>();
+			config.pdAngleA_ = node["pdAngleA"].as<double>();
+			config.pdAngleB_ = node["pdAngleB"].as<double>();
+		}
 		if (node["fullWindowAtEnd"])
 			config.fullWindowAtEnd_ = node["fullWindowAtEnd"].as<bool>();
 		if (node["isamCacheSize"])
@@ -2241,7 +2278,7 @@ void print_map(const MapType & m)
 						probs.i.push_back(c.DAProbs_[k][nz].i[a]);
 						if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id].numDetections_ == 1)
 						{
-							likelihood += config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id].numFoV_) * std::log(1 - config.PD_);
+							likelihood += config.logExistenceOdds + lmLogMiss(c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id]);
 							// std::cout <<" single detection: increase:  " <<logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].id].numFoV_)*std::log(1-config.PD_) <<"\n";
 							probs.l.push_back(likelihood);
 						}
@@ -2263,7 +2300,7 @@ void print_map(const MapType & m)
 							if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id].numDetections_ == 0)
 							{
 								likelihood +=
-									config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id].numFoV_) * std::log(1 - config.PD_);
+									config.logExistenceOdds + lmLogMiss(c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id]);
 								// std::cout <<" 0 detection: increase:  " << logExistenceOdds+ (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].id].numFoV_)*std::log(1-config.PD_)<<"\n";
 								probs.l.push_back(likelihood);
 							}
@@ -2814,14 +2851,14 @@ void print_map(const MapType & m)
 
 				if (c.DA_bimap_[k].right.count(c.poses_[k].fov_[lm]) > 0)
 				{
-					pd_logw += std::log(config.PD_);
+					pd_logw += std::log(fovPD(c.poses_[k], lm));
 				}
 				else
 				{
 					bool exists = c.landmarks_[c.poses_[k].fov_[lm] - c.landmarks_[0].id].numDetections_ > 0;
 					if (exists)
 					{
-						pd_logw += std::log(1 - config.PD_);
+						pd_logw += std::log(1 - fovPD(c.poses_[k], lm));
 					}
 				}
 			}
@@ -3200,13 +3237,13 @@ void print_map(const MapType & m)
 			//
 			//c.landmarksInitProb_[i] = c.landmarksInitProb_[i] / (c.landmarks_[i].numFoV_ * config.PD_);
 			//c.landmarksInitProb_[i] =-(numdet)*config.logKappa_ +c.landmarksInitProb_[i]+ config.logExistenceOdds;
-			c.landmarksInitProb_[i] += std::log(1 - config.PD_) *lm.numFoV_; 
+			c.landmarksInitProb_[i] += lmLogMiss(lm);
 			double aux= exp(c.landmarksInitProb_[i] );
 			double p = aux/(1+aux);
 			if (p > uni_dist(randomGenerators_[threadnum]))
 			{
 				// reset all associations to false alarms
-				expectedWeightChange += std::log(1 - config.PD_) * lm.numFoV_;
+				expectedWeightChange += lmLogMiss(lm);
 				//int numdet = 0;
 				if (candidateStart.empty())
 					buildCandidates();
@@ -3415,7 +3452,18 @@ void print_map(const MapType & m)
 				continue;
 			}
 
-			c.landmarksResetProb_[i] =(c.landmarks_[i].numDetections_)*config.logKappa_ -(c.landmarks_[i].numDetections_) * std::log(config.PD_) - (c.landmarks_[i].numFoV_ - c.landmarks_[i].numDetections_) * std::log(1 - config.PD_) - config.logExistenceOdds;
+			if (config.pdAngleTau_ > 0)
+			{
+				double logPDOddsDet = 0;
+				for (int k : c.landmarks_[i].is_detected)
+				{
+					double pd = pdFor(c.poses_[k], c.landmarks_[i]);
+					logPDOddsDet += std::log(pd / (1 - pd));
+				}
+				c.landmarksResetProb_[i] = c.landmarks_[i].numDetections_ * config.logKappa_ - logPDOddsDet - lmLogMiss(c.landmarks_[i]) - config.logExistenceOdds;
+			}
+			else
+				c.landmarksResetProb_[i] =(c.landmarks_[i].numDetections_)*config.logKappa_ -(c.landmarks_[i].numDetections_) * std::log(config.PD_) - (c.landmarks_[i].numFoV_ - c.landmarks_[i].numDetections_) * std::log(1 - config.PD_) - config.logExistenceOdds;
 			//c.landmarksResetProb_[i] =( (double)( c.landmarks_[i].numDetections_))/c.landmarks_[i].numFoV_;
 			double det_r =( (double)( c.landmarks_[i].numDetections_))/c.landmarks_[i].numFoV_;
 			// double p;
@@ -3455,7 +3503,7 @@ void print_map(const MapType & m)
 					}
 				}
 				expectedWeightChange +=-config.logExistenceOdds;
-				expectedWeightChange += -std::log(1 - config.PD_) * c.landmarks_[i].numFoV_;
+				expectedWeightChange += -lmLogMiss(c.landmarks_[i]);
 				
 				//  std::cout << termcolor::red << "KILL LANDMARK\n" << termcolor::reset
 				//  << c.landmarksResetProb_[i] << " n "
@@ -3697,7 +3745,7 @@ void print_map(const MapType & m)
 
 					if (lm.numDetections_==0 ){
 						if (lm.birthTime_ < c.poses_[k].stamp && lm.birthTime_ > c.poses_[k].stamp-1.0){
-							probs.l[0] += -config.logExistenceOdds - (lm.numFoV_-1) * std::log(1 - config.PD_) ;
+							probs.l[0] += -config.logExistenceOdds - lmLogMissExcept(c.poses_[k], lm);
 						}else{
 							continue;
 						}
@@ -3727,7 +3775,7 @@ void print_map(const MapType & m)
 
 
 					if (lm.numDetections_==1 && prevDA >=0){
-						probs.l[0] += -config.logExistenceOdds - (lm.numFoV_-1) * std::log(1 - config.PD_);
+						probs.l[0] += -config.logExistenceOdds - lmLogMissExcept(c.poses_[k], lm);
 					}
 
 
@@ -3937,7 +3985,7 @@ void print_map(const MapType & m)
 							probs.i.push_back(c.DAProbs_[k][nz].i[a]);
 							if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id].numDetections_ == 1)
 							{
-								likelihood += config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id].numFoV_) * std::log(1 - config.PD_);
+								likelihood += config.logExistenceOdds + lmLogMiss(c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id]);
 								// std::cout <<" single detection: increase:  " << config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].id].numFoV_)*std::log(1-config.PD_) <<"\n";
 								probs.l.push_back(likelihood);
 							}
@@ -3966,7 +4014,7 @@ void print_map(const MapType & m)
 										if (lm.birthTime_ < c.poses_[k].stamp
 										&& lm.birthTime_ > c.poses_[k].stamp-1.0){
 											likelihood +=
-												config.logExistenceOdds + (lm.numFoV_) * std::log(1 - config.PD_);
+												config.logExistenceOdds + lmLogMiss(lm);
 											// std::cout <<" 0 detection: increase:  " << config.logExistenceOdds + (c.landmarks_[c.DAProbs_[k][nz].i[a]-c.landmarks_[0].id].numFoV_)*std::log(1-config.PD_)<<"\n";
 											probs.i.push_back(c.DAProbs_[k][nz].i[a]);
 											probs.l.push_back(likelihood);
@@ -4344,7 +4392,7 @@ void print_map(const MapType & m)
 	inline void VectorGLMBSLAM6D::updateFoVFull(VectorGLMBComponent6D &c)
 	{
 		for (auto &map_point : c.landmarks_)
-			map_point.numFoV_ = 0;
+			map_point.numFoV_ = 0, map_point.sumLogMiss_ = 0;
 
 		std::vector<int> candidates = fovCandidates(c, minpose_, maxpose_);
 		// lmAssocStamp[lm index] == stampBase+k+1  <=>  DA_bimap_[k].right contains the landmark
@@ -4358,6 +4406,7 @@ void print_map(const MapType & m)
 
 			c.poses_[k].fov_.clear();
 			c.poses_[k].predicted_scales.clear();
+			c.poses_[k].fov_pd.clear();
 
 
 			if ( c.poses_[k].Z_.size() > 0 && c.poses_[k].isKeypose)
@@ -4380,6 +4429,7 @@ void print_map(const MapType & m)
 							c.poses_[k].fov_.push_back(c.landmarks_[lm].id);
 							c.poses_[k].predicted_scales.push_back(associated ? associatedScale(c, k, lm) : predScale);
 							c.landmarks_[lm].numFoV_++;
+							addToFoV(c.poses_[k], c.landmarks_[lm]);
 							isInFov = true;
 						}
 					}
@@ -4399,7 +4449,7 @@ void print_map(const MapType & m)
 	inline void VectorGLMBSLAM6D::updateFoVCached(VectorGLMBComponent6D &c)
 	{
 		for (auto &map_point : c.landmarks_)
-			map_point.numFoV_ = 0;
+			map_point.numFoV_ = 0, map_point.sumLogMiss_ = 0;
 
 		auto &fc = c.fovCache_;
 		const double tol = config.fovCacheTol_;
@@ -4472,6 +4522,7 @@ void print_map(const MapType & m)
 			auto &pose = c.poses_[k];
 			pose.fov_.clear();
 			pose.predicted_scales.clear();
+			pose.fov_pd.clear();
 			auto &row = fc.rows[k];
 			if (!(pose.Z_.size() > 0 && pose.isKeypose))
 			{
@@ -4541,6 +4592,7 @@ void print_map(const MapType & m)
 				pose.fov_.push_back(c.landmarks_[lm].id);
 				pose.predicted_scales.push_back(scale);
 				c.landmarks_[lm].numFoV_++;
+				addToFoV(pose, c.landmarks_[lm]);
 			};
 			size_t j = 0;
 			for (auto &e : row.e)
@@ -4682,7 +4734,13 @@ void print_map(const MapType & m)
 						}
 						p += desclikelihood;
 
-						p += logPDOdds;
+						if (config.pdAngleTau_ > 0)
+						{
+							double pd = c.poses_[k].fov_pd[lmFovIdx];
+							p += std::log(pd / (1 - pd));
+						}
+						else
+							p += logPDOdds;
 						
 						{ 
 							 p += -0.5 * (error_scalar*error_scalar* config.stereoInfo_(0,0)); //chi2, this assumes information is a*Identity(3,3)
@@ -4755,6 +4813,7 @@ void print_map(const MapType & m)
 
 		lm.numDetections_ = 0;
 		lm.numFoV_ = 0;
+		lm.sumLogMiss_ = 0;
 		int level = pose.keypoints_left[nl].octave;
 		const int nLevels = pose.mnScaleLevels;
 
@@ -4906,6 +4965,7 @@ void print_map(const MapType & m)
 			c.poses_[k].depth = initial_component_.poses_[k].depth;
 			c.poses_[k].matches_left_to_right = initial_component_.poses_[k].matches_left_to_right;
 			c.poses_[k].predicted_scales = initial_component_.poses_[k].predicted_scales;
+			c.poses_[k].fov_pd = initial_component_.poses_[k].fov_pd;
 			c.poses_[k].initial_lm_id = initial_component_.poses_[k].initial_lm_id;
 			// create graph pose
 			gtsam::Pose3 pose_estimate;

@@ -62,6 +62,7 @@ namespace rfs
         PointType position;
         int numDetections_;
         int numFoV_;
+        double sumLogMiss_ = 0; /**< sum of log(1-PD) over the keyposes whose FoV holds this landmark, when PD depends on the viewing angle */
         int id;
         double birthTime_;
         double maxDetectionTime;
