@@ -36,6 +36,8 @@ int main(int argc, char* argv[]){
     tbbLimit = std::make_unique<tbb::global_control>(tbb::global_control::max_allowed_parallelism, vglmb.config.tbbMaxThreads_);
   rfs::initializeGaussianGenerators();
   vglmb.loadEuroc();
+  // OpenCV's parallel_for (TBB backend) is only needed for loading; its worker pool otherwise keeps spinning in sched_yield and competes with the OpenMP component threads
+  cv::setNumThreads(0);
   vglmb.gt_est.loadTUM(vglmb.config.eurocFolder_ + "/mav0/state_groundtruth_estimate0/data.tum",vglmb.config.base_link_to_cam0_se3, vglmb.startingStamp);
   //vglmb.calculateWeight(vglmb.gt_graph);
   //std::cout << "GROUND TRUTH WEIGHT:             " <<vglmb.gt_graph.logweight_ << "\n";
