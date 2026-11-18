@@ -362,7 +362,7 @@ void print_map(const MapType & m)
 			bool predictScaleNoMargin_ = false; /**< with predictScale: predict from distance*scale without the 1.8 margin of mfMaxDistance */
 			std::string motionModel_ = "brownian"; /**< odometry prior: brownian, cv, ca or cj. odomInfo is the information of the chosen model's one-frame residual */
 			double accelerationDampingTime_ = 0; /**< with ca: acceleration decays as exp(-t/this); <=0 is undamped */
-			bool imu_ = false; /**< CombinedImuFactor between consecutive keyposes (spanning demoted frames) instead of the motion prior */
+			bool imu_ = true; /**< CombinedImuFactor between consecutive keyposes (spanning demoted frames) instead of the motion prior */
 			std::vector<double> imuNoise_ = {1.6968e-4, 2.0e-3, 1.9393e-5, 3.0e-3}; /**< gyro noise density, accel noise density, gyro random walk, accel random walk */
 			double imuInitTime_ = 1.0; /**< IMU seconds from the first frame, assumed static: gravity direction and gyro bias */
 			std::vector<double> imuPriorSigmas_ = {0.05, 0.2, 0.01}; /**< frame 0 priors: velocity, accel bias, gyro bias */

@@ -18,7 +18,7 @@ numComponents: 12
 maxRange: 5
 numLevenbergIterations: 0
 tempFactor: 0.995
-initTemp: 1000
+initTemp: 10
 birthDeathNumIter: 1
 crossoverNumIter: 13300
 numPosesToOptimize: 10
@@ -155,3 +155,17 @@ camera.principal_point:
         cols: 1
         data: [379.999 , 255.238]
 
+
+# best configuration so far (V201/V203 full runs)
+predictScale: true
+predictScaleNoMargin: true
+eliminateLandmarksFirst: true
+visitedMaxEntries: 2000
+maxDistanceFactor: 1.2
+pdOctaveRatio: [0.41, 0.54, 0.63, 0.59, 0.46, 0.30, 0.18]
+mergeLM: true
+splitLM: true
+scaleDescriptors: true
+mergeTwinMaxBits: [130, 170, 210]
+mergeTwinAll: true
+imu: true
