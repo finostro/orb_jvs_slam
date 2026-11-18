@@ -63,6 +63,7 @@ namespace rfs
         int numDetections_;
         int numFoV_;
         double sumLogMiss_ = 0; /**< sum of log(1-PD) over the keyposes whose FoV holds this landmark, when PD depends on the viewing angle */
+        double visLogLik_ = 0, visLogMiss_ = 0; /**< visHMM: log-likelihood of the detection track, as associated and with every frame a miss */
         int id;
         double birthTime_;
         double maxDetectionTime;
@@ -70,13 +71,20 @@ namespace rfs
         int  birthMatch;
         OrbslamPose *birthPose;
 
-        std::set<int> is_detected;
+        std::multiset<int> is_detected; /**< frame k once per associated measurement */
+        void eraseDetection(int k)
+        {
+            auto it = is_detected.find(k);
+            if (it != is_detected.end())
+                is_detected.erase(it);
+        }
 
         // Mean viewing direction
         Eigen::Vector3d normalVector;
 
         // Best descriptor to fast matching
         ORBDescriptor descriptor;
+        std::vector<std::pair<int, ORBDescriptor>> scaleDesc; /**< scaleDescriptors: (level-0 distance bin, majority descriptor of the detections in that bin), sorted by bin */
 
         // Scale invariance distances
         float mfMinDistance;

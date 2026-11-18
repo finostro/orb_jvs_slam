@@ -34,6 +34,7 @@
 
 #include <vector>
 #include <boost/bimap.hpp>
+#include <boost/bimap/multiset_of.hpp>
 #include <boost/container/allocator.hpp>
 
 
@@ -112,7 +113,9 @@ struct VectorGLMBComponent6D {
 	typedef gtsam::Pose3 PoseType;
 	typedef gtsam::GenericStereoFactor<gtsam::Pose3,gtsam::Point3> StereoMeasurementEdge;
 	typedef gtsam::BetweenFactor<gtsam::Pose3> OdometryEdge;
-	typedef std::vector<boost::bimap<int, int, boost::container::allocator<int>>>  BimapType;
+	// measurement nz -> landmark key; a landmark may hold several measurements of one frame (pdOctaveRatio, one per octave)
+	typedef boost::bimap<int, boost::bimaps::multiset_of<int>, boost::container::allocator<int>> FrameBimap;
+	typedef std::vector<FrameBimap>  BimapType;
 
 
 
@@ -140,6 +143,7 @@ struct VectorGLMBComponent6D {
 	std::vector<OrbslamPose*> keyposes_;
 	std::vector<gtsam::NoiseModelFactor::shared_ptr> odometries_;
 	boost::bimap<int , int > odometry_indices;
+	boost::bimap<std::pair<int, int>, int> imu_indices; /**< imu: (keypose a, next keypose b) -> iSAM2 factor index */
 	
 	std::vector<OrbslamMapPoint> landmarks_;
 	std::vector<double> landmarksResetProb_, landmarksInitProb_;

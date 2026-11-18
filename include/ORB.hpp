@@ -92,16 +92,24 @@ namespace rfs{
         return retval;
       }
 
+      inline static double logWeightPerBit = -2.0; /**< log-likelihood per differing bit, config key descriptorLogWeight */
       double likelihood(const ORBDescriptor &left, const ORBDescriptor &right){
         double d = distance(*this, left)+distance(*this, right);
         if (d > 200) return -std::numeric_limits<double>::infinity();
         static  double a = std::log(1.0/8.0);
         static  double b = std::log(7.0/8.0);
         static  double c = std::log(1.0/2.0);
-        static constexpr double f = -2.0;
-        double ret =d*f;
+        double ret =d*logWeightPerBit;
         //std::cout << d << "\n";
         return  ret;
+      }
+      /** likelihood with the per-bit weight multiplied by scale and the 200-bit cutoff divided by it; cutoff=false drops the cutoff */
+      double likelihood(const ORBDescriptor &left, const ORBDescriptor &right, double scale, bool cutoff = true){
+        if (scale == 1.0 && cutoff)
+          return likelihood(left, right);
+        double d = distance(*this, left)+distance(*this, right);
+        if (cutoff && d * scale > 200) return -std::numeric_limits<double>::infinity();
+        return d * logWeightPerBit * scale;
       }
       double falseAlarmLikelihood(){
 

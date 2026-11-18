@@ -38,6 +38,7 @@
 #include <math.h>
 #include <vector>
 #include <atomic>
+#include <mutex>
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -89,6 +90,8 @@
 #include <gtsam/slam/StereoFactor.h>
 
 #include <gtsam/nonlinear/ISAM2.h>
+#include <gtsam/navigation/CombinedImuFactor.h>
+#include <gtsam/inference/Symbol.h>
 #include <gtsam/slam/dataset.h>
 
 
@@ -118,8 +121,8 @@ namespace rfs
 	struct bimap_less
 	{
 		bool operator()(
-			const boost::bimap<int, int, boost::container::allocator<int>> x,
-			const boost::bimap<int, int, boost::container::allocator<int>> y) const
+			const VectorGLMBComponent6D::FrameBimap x,
+			const VectorGLMBComponent6D::FrameBimap y) const
 		{
 
 			return x.left < y.left;
@@ -359,15 +362,37 @@ void print_map(const MapType & m)
 			bool predictScaleNoMargin_ = false; /**< with predictScale: predict from distance*scale without the 1.8 margin of mfMaxDistance */
 			std::string motionModel_ = "brownian"; /**< odometry prior: brownian, cv, ca or cj. odomInfo is the information of the chosen model's one-frame residual */
 			double accelerationDampingTime_ = 0; /**< with ca: acceleration decays as exp(-t/this); <=0 is undamped */
+			bool imu_ = false; /**< CombinedImuFactor between consecutive keyposes (spanning demoted frames) instead of the motion prior */
+			std::vector<double> imuNoise_ = {1.6968e-4, 2.0e-3, 1.9393e-5, 3.0e-3}; /**< gyro noise density, accel noise density, gyro random walk, accel random walk */
+			double imuInitTime_ = 1.0; /**< IMU seconds from the first frame, assumed static: gravity direction and gyro bias */
+			std::vector<double> imuPriorSigmas_ = {0.05, 0.2, 0.01}; /**< frame 0 priors: velocity, accel bias, gyro bias */
 			size_t visitedMaxEntries_ = 0; /**< >0: keep at most this many visited_ entries, dropping the lowest weights */
 			double isamDogleg_ = 0; /**< >0: iSAM2 uses Powell's dogleg with this initial trust-region radius instead of Gauss-Newton */
 			bool rebuildIsamOnResample_ = false; /**< when a component is given a hypothesis its iSAM2 does not hold, rebuild the iSAM2 from that hypothesis instead of updating the old one */
+			double maxDistanceFactor_ = 0; /**< >0: a landmark's maxD is this times its level-0 distance (max with 1.05 x farthest detection) instead of 1.8 times; minD unchanged */
+			std::vector<double> descOctaveScale_; /**< 4 values: descriptor per-bit weight times value |D| (cutoff divided by it), D = measured octave - predicted octave, clamped to 3; the cutoff then only gates candidates, the weight has none */
+			bool scaleDescriptors_ = false; /**< a landmark keeps one descriptor per level-0 distance bin round(log(dist*1.2^octave)/log 1.2); a measurement is scored against the nearest bin, and refD is the mean level-0 distance of the most detected bin */
+			std::vector<double> descScaleCost_ = {0, 1, 0, 1, 0, 1, 0, 1}; /**< scaleDescriptors: per |bin offset| 0..3 (clamped), descriptor log likelihood = c + f * descriptorLogWeight * bits, as pairs c,f; candidates need it >= 200 * descriptorLogWeight, the weight has no cutoff */
+			std::vector<double> visHMM_; /**< [a, b, eps]: per-landmark visible/occluded Markov chain over its FoV keyposes, a = P(vis->vis), b = P(occ->vis) per keypose step, eps = slot PD while occluded; needs pdOctaveRatio */
+			double visInit_ = -1; /**< P(visible) at a landmark's first FoV keypose; <0: stationary b/(1-a+b) */
+			std::vector<double> visPDAngles_; /**< upper edges (deg) of the viewing-angle bins of visPD; the last bin is open */
+			std::vector<double> visPD_; /**< visible-state slot PD, row per angle bin, columns octave offset -3..3; empty: slotPD(base PD, D) */
+			bool mergeTwinAll_ = false; /**< mergeTwins merges every twin pair of the sampled keypose, each with probability mergeTwinProb, instead of one */
+			double mergeTwinProb_ = 1;
+			bool twinDiag_ = false; /**< write twin_diag.csv */
+			std::vector<double> mergeTwinMaxBits_; /**< 3 values: if set, every birth/death step tries mergeTwins, with this max L+R distance between the twin measurements at octave difference 1, 2, 3+ */
+			bool mergeLM_ = false; /**< every birth/death step, merge one pair of landmarks between which sampleDA switched a measurement */
+			bool splitLM_ = false; /**< every birth/death step, move one landmark's detections at one octave to the landmark spawned by one of them */
+			std::vector<double> pdOctaveRatio_; /**< 7 values: if set, a landmark is detected independently at each octave predicted+D, D=-3..3, with PD times value D+3; the per-octave scale penalty is dropped (scaleLogWeight becomes a constant bonus) */
 			double pdAngleTau_ = 0; /**< >0: PD = pdAngleA exp(-theta/pdAngleTau) + pdAngleB, theta in degrees between the viewing ray and the landmark normal; PD is then unused */
 			double pdAngleA_ = 0;
 			double pdAngleB_ = 0;
 			double maxRelDepthSigma_ = 0; /**< >0: a landmark gets stereo factors in iSAM2 only once its associated measurements fix its position to this fraction of its depth; until then it rides on its birth pose and is weighted outside iSAM2 */
 			bool fullWindowAtEnd_ = true; /**< once the last pose is covered, sample data association over the whole trajectory instead of the sliding window */
 			size_t isamCacheSize_ = 0; /**< >0: keep the iSAM2 state of this many highest-weight hypotheses and hand it to components that are given one of them */
+			size_t dumpDACandidates_ = 0; /**< >0: every this many iterations write the association candidates of component 0 to resultFolder/dacand.csv */
+			double scaleLogWeight_ = 20; /**< an association scores this much for a measurement at the predicted octave, and loses it per octave of difference */
+			size_t dumpDetections_ = 0; /**< >0: every this many iterations write, for the best component, which landmarks in each keypose's field of view are detected, to resultFolder/detections.csv */
 			size_t dumpIndeterminate_ = 0; /**< >0: write the factors around the variable of this many iSAM2 indeterminate-system exceptions to resultFolder/indet.txt */
 			size_t dumpStallTop_ = 0; /**< >0: at the end of run() write the trajectories of this many highest-weight hypotheses evaluated since coverage last advanced */
 			bool isamUnconstrainedOrdering_ = false; /**< plain COLAMD: drop iSAM2's default constraint that puts newly observed variables last */
@@ -453,6 +478,120 @@ void print_map(const MapType & m)
 		void updateDescriptors(VectorGLMBComponent6D &c);
 		void perturbTraj(VectorGLMBComponent6D &c);
 
+		std::vector<double> imuT_; /**< imu: sample times (s) */
+		std::vector<Eigen::Vector3d> imuAcc_, imuGyro_;
+		std::shared_ptr<gtsam::PreintegrationCombinedParams> imuParams_;
+		gtsam::imuBias::ConstantBias imuBias0_; /**< prior mean and preintegration point: zero accel bias, static mean gyro */
+		static gtsam::Key velKey(int k) { return gtsam::Symbol('v', k); }
+		static gtsam::Key biasKey(int k) { return gtsam::Symbol('b', k); }
+		static bool isNavKey(gtsam::Key key) { return gtsam::Symbol(key).chr() != 0; }
+
+		/** read mav0/imu0, take gravity and gyro bias from the first imuInitTime seconds; the world frame is the first camera frame */
+		void loadImu()
+		{
+			std::ifstream f(config.eurocFolder_ + "/mav0/imu0/data.csv");
+			std::string line;
+			while (std::getline(f, line))
+			{
+				if (line.empty() || line[0] == '#')
+					continue;
+				std::replace(line.begin(), line.end(), ',', ' ');
+				std::istringstream ss(line);
+				long long t;
+				Eigen::Vector3d w, a;
+				ss >> t >> w[0] >> w[1] >> w[2] >> a[0] >> a[1] >> a[2];
+				imuT_.push_back(t / 1e9);
+				imuGyro_.push_back(w);
+				imuAcc_.push_back(a);
+			}
+			Eigen::Vector3d am = Eigen::Vector3d::Zero(), wm = Eigen::Vector3d::Zero();
+			int n = 0;
+			for (size_t i = 0; i < imuT_.size(); i++)
+				if (imuT_[i] >= vTimestampsCam[0] && imuT_[i] < vTimestampsCam[0] + config.imuInitTime_)
+				{
+					am += imuAcc_[i];
+					wm += imuGyro_[i];
+					n++;
+				}
+			if (n == 0)
+			{
+				std::cerr << "no IMU samples in the first imuInitTime seconds\n";
+				exit(1);
+			}
+			am /= n;
+			wm /= n;
+			gtsam::Pose3 camImu = config.base_link_to_cam0_se3.inverse(); // base_link is the IMU frame
+			imuParams_ = gtsam::PreintegrationCombinedParams::MakeSharedU(9.81);
+			imuParams_->n_gravity = -(camImu.rotation() * am).normalized() * 9.81; // at rest the accelerometer reads -gravity
+			imuParams_->body_P_sensor = camImu;
+			const auto &q = config.imuNoise_;
+			imuParams_->gyroscopeCovariance = gtsam::I_3x3 * q[0] * q[0];
+			imuParams_->accelerometerCovariance = gtsam::I_3x3 * q[1] * q[1];
+			imuParams_->biasOmegaCovariance = gtsam::I_3x3 * q[2] * q[2];
+			imuParams_->biasAccCovariance = gtsam::I_3x3 * q[3] * q[3];
+			imuParams_->integrationCovariance = gtsam::I_3x3 * 1e-8;
+			imuBias0_ = gtsam::imuBias::ConstantBias(gtsam::Vector3::Zero(), wm);
+			std::cout << "imu: " << imuT_.size() << " samples, gravity " << imuParams_->n_gravity.transpose() << " gyro bias " << wm.transpose() << "\n";
+		}
+
+		/** preintegrated IMU from the stamp of keypose a to that of keypose b, zero-order hold */
+		gtsam::NonlinearFactor::shared_ptr imuFactor(VectorGLMBComponent6D &c, int a, int b)
+		{
+			gtsam::PreintegratedCombinedMeasurements pim(imuParams_, imuBias0_);
+			double t = c.poses_[a].stamp, tb = c.poses_[b].stamp;
+			size_t i = std::max<size_t>(std::upper_bound(imuT_.begin(), imuT_.end(), t) - imuT_.begin(), 1);
+			for (; t < tb; i++)
+			{
+				double tn = i < imuT_.size() ? std::min(imuT_[i], tb) : tb;
+				if (tn > t)
+					pim.integrateMeasurement(imuAcc_[i - 1], imuGyro_[i - 1], tn - t);
+				t = tn;
+			}
+			return std::make_shared<gtsam::CombinedImuFactor>(a, velKey(a), b, velKey(b), biasKey(a), biasKey(b), pim);
+		}
+
+		/** imu: velocity and bias priors at frame 0 */
+		void addImuPriors(VectorGLMBComponent6D &c)
+		{
+			if (!config.imu_)
+				return;
+			const auto &s = config.imuPriorSigmas_;
+			c.new_edges.addPrior<gtsam::Vector3>(velKey(0), gtsam::Vector3::Zero(), gtsam::noiseModel::Isotropic::Sigma(3, s[0]));
+			c.new_edges.addPrior(biasKey(0), imuBias0_, gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector6() << s[1], s[1], s[1], s[2], s[2], s[2]).finished()));
+			c.new_nodes.insert(velKey(0), gtsam::Vector3(gtsam::Vector3::Zero()));
+			c.new_nodes.insert(biasKey(0), imuBias0_);
+		}
+
+		/** imu: one factor between each pair of consecutive keyposes up to max_detection_time, replacing those whose pair changed */
+		void updateImuGraph(VectorGLMBComponent6D &c, int max_detection_time)
+		{
+			std::vector<int> K;
+			for (int k = 0; k <= max_detection_time; k++)
+				if (c.poses_[k].isKeypose)
+					K.push_back(k);
+			std::set<std::pair<int, int>> want;
+			for (size_t i = 1; i < K.size(); i++)
+				want.insert({K[i - 1], K[i]});
+			for (auto &e : c.imu_indices.left)
+				if (!want.count(e.first))
+					c.removed_edges.push_back(e.second);
+			for (auto &p : want)
+				if (c.imu_indices.left.find(p) == c.imu_indices.left.end())
+					c.new_edges.push_back(imuFactor(c, p.first, p.second));
+			for (size_t i = 1; i < K.size(); i++)
+			{
+				int k = K[i], kp = K[i - 1];
+				if (!c.current_estimate.exists(velKey(k)))
+				{
+					double dt = c.poses_[k].stamp - c.poses_[kp].stamp;
+					gtsam::Vector3 v = (c.poses_[k].pose.translation() - c.poses_[kp].pose.translation()) / dt;
+					c.new_nodes.insert(velKey(k), v);
+				}
+				if (!c.current_estimate.exists(biasKey(k)))
+					c.new_nodes.insert(biasKey(k), c.current_estimate.exists(biasKey(kp)) ? c.current_estimate.at<gtsam::imuBias::ConstantBias>(biasKey(kp)) : imuBias0_);
+			}
+		}
+
 		/** dumpIndeterminate: describe the variable named by an indeterminate-system exception and every factor on it */
 		void dumpIndeterminate(VectorGLMBComponent6D &c, const std::exception &e)
 		{
@@ -477,7 +616,9 @@ void print_map(const MapType & m)
 				  << " inLin " << lin.exists(key) << " stereo " << count[key].first << " other " << count[key].second
 				  << " newEdges " << c.new_edges.size() << " removed " << c.removed_edges.size() << "\n";
 				bool isLm = key >= c.poses_.size();
-				if (lin.exists(key))
+				if (isNavKey(key))
+					f << "  nav " << gtsam::Symbol(key).chr() << " " << gtsam::Symbol(key).index() << "\n";
+				else if (lin.exists(key))
 					f << "  value " << (isLm ? lin.at<gtsam::Point3>(key).transpose() : lin.at<gtsam::Pose3>(key).translation().transpose()) << "\n";
 				for (const auto &fac : factors)
 				{
@@ -546,6 +687,80 @@ void print_map(const MapType & m)
 			double deg = std::acos(std::clamp(ray.dot(lm.normalVector), -1.0, 1.0)) * 180.0 / M_PI;
 			return config.pdAngleA_ * std::exp(-deg / config.pdAngleTau_) + config.pdAngleB_;
 		}
+		/** pdOctaveRatio: a landmark is detected independently at each octave within +-3 of its predicted one */
+		bool multiOctave() const { return !config.pdOctaveRatio_.empty(); }
+		double descScale(int octaveDiff) const { return config.descOctaveScale_.empty() ? 1.0 : config.descOctaveScale_[std::min(std::abs(octaveDiff), 3)]; }
+
+		/** scaleDescriptors: level-0 distance bin of a detection at this octave and distance */
+		int scaleBin(const OrbslamPose &pose, double dist, int octave) const
+		{
+			return (int)std::lround(std::log(dist * pose.mvScaleFactors[octave]) / pose.mfLogScaleFactor);
+		}
+
+		/** scaleDescriptors: the landmark's only bin is its birth detection */
+		void resetScaleDesc(OrbslamMapPoint &lm) const
+		{
+			auto &pose = *lm.birthPose;
+			int nl = pose.matches_left_to_right[lm.birthMatch].queryIdx;
+			lm.scaleDesc.assign(1, {scaleBin(pose, pose.point_camera_frame[lm.birthMatch].norm(), pose.keypoints_left[nl].octave), pose.descriptors_left[nl]});
+		}
+
+		/** descriptor log likelihood of measurement nz for lm; gate: -inf past the cutoff (candidate selection) */
+		double descLogLik(const OrbslamPose &pose, int nz, OrbslamMapPoint &lm, int scalediff, bool gate) const
+		{
+			int nl = pose.matches_left_to_right[nz].queryIdx;
+			auto &dl = pose.descriptors_left[nl];
+			auto &dr = pose.descriptors_right[pose.matches_left_to_right[nz].trainIdx];
+			if (!config.scaleDescriptors_ || lm.scaleDesc.empty())
+				return lm.descriptor.likelihood(dl, dr, descScale(scalediff), gate || config.descOctaveScale_.empty());
+			int bin = scaleBin(pose, (lm.position - pose.pose.translation()).norm(), pose.keypoints_left[nl].octave);
+			const std::pair<int, ORBDescriptor> *best = &lm.scaleDesc[0];
+			for (auto &s : lm.scaleDesc)
+				if (std::abs(s.first - bin) < std::abs(best->first - bin))
+					best = &s;
+			int dS = std::min(std::abs(best->first - bin), 3);
+			double d = ORBDescriptor::distance(best->second, dl) + ORBDescriptor::distance(best->second, dr);
+			double ll = config.descScaleCost_[2 * dS] + config.descScaleCost_[2 * dS + 1] * ORBDescriptor::logWeightPerBit * d;
+			if (gate && ll < 200 * ORBDescriptor::logWeightPerBit)
+				return -std::numeric_limits<double>::infinity();
+			return ll;
+		}
+		/** PD is per FoV entry (fov_pd, sumLogMiss_) */
+		bool pdPerEntry() const { return config.pdAngleTau_ > 0 || multiOctave(); }
+		double basePD(const OrbslamPose &pose, const OrbslamMapPoint &lm) const
+		{
+			return config.pdAngleTau_ > 0 ? pdFor(pose, lm) : config.PD_;
+		}
+		// PD at octave predicted + D; an association that drifted beyond +-3 keeps the +-3 value
+		double slotPD(double base, int D) const
+		{
+			return base * config.pdOctaveRatio_[std::clamp(D, -3, 3) + 3];
+		}
+		// sum of log(1-PD) over the octaves a landmark predicted at octave s can be detected at
+		double frameLogMiss(const OrbslamPose &pose, double base, int s) const
+		{
+			double m = 0;
+			for (int o = std::max(0, s - 3); o <= std::min(pose.mnScaleLevels - 1, s + 3); o++)
+				m += std::log(1 - slotPD(base, o - s));
+			return m;
+		}
+		int measOctave(const OrbslamPose &pose, int nz) const
+		{
+			return pose.keypoints_left[pose.matches_left_to_right[nz].queryIdx].octave;
+		}
+		int geomScale(const OrbslamPose &pose, const OrbslamMapPoint &lm) const
+		{
+			double dist = (lm.position - pose.pose.translation()).norm();
+			return std::clamp(int(std::ceil(std::log(lm.mfScaleRefDistance / dist) / pose.mfLogScaleFactor)), 0, pose.mnScaleLevels - 1);
+		}
+		// log(PD/(1-PD)) of a detection of lm in pose at octave
+		double detLogOdds(const OrbslamPose &pose, const OrbslamMapPoint &lm, int octave) const
+		{
+			double pd = basePD(pose, lm);
+			if (multiOctave())
+				pd = slotPD(pd, octave - geomScale(pose, lm));
+			return std::log(pd / (1 - pd));
+		}
 		double fovPD(const OrbslamPose &pose, int fovIdx) const
 		{
 			return config.pdAngleTau_ > 0 ? pose.fov_pd[fovIdx] : config.PD_;
@@ -553,21 +768,130 @@ void print_map(const MapType & m)
 		// sum of log(1-PD) over the keyposes that have lm in their FoV
 		double lmLogMiss(const OrbslamMapPoint &lm) const
 		{
-			return config.pdAngleTau_ > 0 ? lm.sumLogMiss_ : lm.numFoV_ * std::log(1 - config.PD_);
+			if (visHMM())
+				return lm.visLogMiss_;
+			return pdPerEntry() ? lm.sumLogMiss_ : lm.numFoV_ * std::log(1 - config.PD_);
 		}
 		// same, leaving out pose
 		double lmLogMissExcept(const OrbslamPose &pose, const OrbslamMapPoint &lm) const
 		{
+			if (multiOctave())
+				return lm.sumLogMiss_ - frameLogMiss(pose, basePD(pose, lm), geomScale(pose, lm));
 			return config.pdAngleTau_ > 0 ? lm.sumLogMiss_ - std::log(1 - pdFor(pose, lm)) : (lm.numFoV_ - 1) * std::log(1 - config.PD_);
 		}
+		// call after pushing the entry's predicted scale
 		void addToFoV(OrbslamPose &pose, OrbslamMapPoint &lm)
 		{
-			if (config.pdAngleTau_ <= 0)
+			if (!pdPerEntry())
 				return;
-			double pd = pdFor(pose, lm);
+			double pd = basePD(pose, lm);
 			pose.fov_pd.push_back(pd);
-			lm.sumLogMiss_ += std::log(1 - pd);
+			lm.sumLogMiss_ += multiOctave() ? frameLogMiss(pose, pd, pose.predicted_scales.back()) : std::log(1 - pd);
 		}
+
+		// visHMM: a landmark is visible or occluded at each keypose of its FoV track (keyposes with it in fov_, in order),
+		// a Markov chain with per-keypose-step transitions; octave slots are detected independently given the state
+		bool visHMM() const { return !config.visHMM_.empty(); }
+		/** visHMM lookup tables, built once: everything below works in the probability domain without per-entry log/exp */
+		struct VisTables
+		{
+			int L = 0;						 // octave levels
+			std::vector<double> cosEdges;	 // cos of visPDAngles, descending
+			std::vector<double> pdV, oddsV;	 // [abin * 7 + D + 3]: visible slot PD and PD / (1 - PD)
+			std::vector<double> missV, missO; // [abin * L + s], [s]: P(no slot detected) given visible / occluded, slots s-3..s+3 within 0..L-1
+			double oddsO = 0;
+			std::vector<double> lamPow; // (a - b)^(dk / keypose_skip), dk frames (frontier frames are all keyposes, so steps can be fractional)
+		} vis_;
+		std::once_flag visOnce_;
+		void visBuildTables(int L, int maxFrames)
+		{
+			const double a = config.visHMM_[0], b = config.visHMM_[1], eps = config.visHMM_[2];
+			const int nb = config.visPD_.empty() ? 1 : config.visPDAngles_.size() + 1;
+			vis_.L = L;
+			for (double e : config.visPDAngles_)
+				vis_.cosEdges.push_back(std::cos(e * M_PI / 180.0));
+			vis_.pdV.resize(nb * 7);
+			vis_.oddsV.resize(nb * 7);
+			for (int i = 0; i < nb * 7; i++)
+			{
+				vis_.pdV[i] = config.visPD_.empty() ? 0 : config.visPD_[i];
+				vis_.oddsV[i] = vis_.pdV[i] / (1 - vis_.pdV[i]);
+			}
+			vis_.missV.assign(nb * L, 1);
+			vis_.missO.assign(L, 1);
+			for (int s = 0; s < L; s++)
+				for (int o = std::max(0, s - 3); o <= std::min(L - 1, s + 3); o++)
+				{
+					vis_.missO[s] *= 1 - eps;
+					for (int ab = 0; ab < nb; ab++)
+						vis_.missV[ab * L + s] *= 1 - vis_.pdV[ab * 7 + o - s + 3];
+				}
+			vis_.oddsO = eps / (1 - eps);
+			vis_.lamPow.resize(maxFrames + 1);
+			for (int dk = 0; dk <= maxFrames; dk++)
+				vis_.lamPow[dk] = std::pow(a - b, double(dk) / config.keypose_skip);
+		}
+		int visAngleBin(const OrbslamPose &pose, const OrbslamMapPoint &lm) const
+		{
+			if (config.visPD_.empty())
+				return 0;
+			Eigen::Vector3d d = lm.position - pose.pose.translation();
+			double cosv = d.dot(lm.normalVector) / d.norm();
+			int i = 0;
+			while (i < (int)vis_.cosEdges.size() && cosv < vis_.cosEdges[i])
+				i++;
+			return i;
+		}
+		/** visible slot PD at octave offset D (clamped to +-3) */
+		double visSlotPD(const OrbslamPose &pose, int fovIdx, int abin, int D) const
+		{
+			D = std::clamp(D, -3, 3);
+			return config.visPD_.empty() ? slotPD(pose.fov_pd[fovIdx], D) : vis_.pdV[abin * 7 + D + 3];
+		}
+		double visMissV(const OrbslamPose &pose, int fovIdx, int abin, int s) const
+		{
+			if (!config.visPD_.empty())
+				return vis_.missV[abin * vis_.L + s];
+			double m = 1;
+			for (int o = std::max(0, s - 3); o <= std::min(vis_.L - 1, s + 3); o++)
+				m *= 1 - slotPD(pose.fov_pd[fovIdx], o - s);
+			return m;
+		}
+		/** P(visible at k+dk | visible at k) and P(visible at k+dk | occluded at k), dk frames */
+		std::pair<double, double> visTrans(int dk) const
+		{
+			const double a = config.visHMM_[0], b = config.visHMM_[1], pi = b / (1 - a + b);
+			const double lam = dk < (int)vis_.lamPow.size() ? vis_.lamPow[dk] : std::pow(a - b, double(dk) / config.keypose_skip);
+			return {pi + (1 - pi) * lam, pi * (1 - lam)};
+		}
+		/** emission probabilities of FoV entry fovIdx of pose k given visible (ev) and occluded (eo); with allMiss every slot is a miss */
+		void visEmission(const VectorGLMBComponent6D &c, int k, int fovIdx, int abin, bool allMiss, double &ev, double &eo) const
+		{
+			auto &pose = c.poses_[k];
+			const int s = pose.predicted_scales[fovIdx];
+			ev = visMissV(pose, fovIdx, abin, s);
+			eo = vis_.missO[s];
+			if (allMiss)
+				return;
+			for (auto r = c.DA_bimap_[k].right.equal_range(pose.fov_[fovIdx]); r.first != r.second; ++r.first)
+			{
+				const int D = measOctave(pose, r.first->second) - s;
+				const double pd = visSlotPD(pose, fovIdx, abin, D);
+				// a detection outside the +-3 slots (predicted scale moved) adds its PD without removing a miss
+				ev *= std::abs(D) <= 3 ? pd / (1 - pd) : pd;
+				eo *= std::abs(D) <= 3 ? vis_.oddsO : config.visHMM_[2];
+			}
+		}
+		/** association log-odds of a single detection of fov entry fovIdx at octave o against none, given the rest of the track (fov_rho) */
+		double visSlotLogOdds(const OrbslamPose &pose, int fovIdx, int o) const
+		{
+			const int s = pose.predicted_scales[fovIdx], abin = pose.fov_abin[fovIdx];
+			const double rho = pose.fov_rho[fovIdx], pd = visSlotPD(pose, fovIdx, abin, o - s);
+			const double mV = rho * visMissV(pose, fovIdx, abin, s), mO = (1 - rho) * vis_.missO[s];
+			return std::log((mV * pd / (1 - pd) + mO * vis_.oddsO) / (mV + mO));
+		}
+		/** landmark track log-likelihoods (visLogLik_, visLogMiss_); with wmin >= 0 also fov_rho, fov_abin of poses wmin..maxpose_-1 */
+		void visPass(VectorGLMBComponent6D &c, int wmin);
 		/** maxRelDepthSigma: true while lm is associated but kept out of iSAM2 */
 		bool lmGated(const VectorGLMBComponent6D &c, const OrbslamMapPoint &lm) const
 		{
@@ -609,6 +933,7 @@ void print_map(const MapType & m)
 			c.landmark_edge_indices.clear();
 			c.removed_edges.clear();
 			c.odometry_indices.clear();
+			c.imu_indices.clear();
 			for (auto &pose : c.poses_)
 				for (auto &z : pose.Z_)
 					z.reset();
@@ -616,6 +941,7 @@ void print_map(const MapType & m)
 			c.new_nodes.clear();
 			c.new_edges.addPrior(0, c.initial_pose, config.odom_noise);
 			c.new_nodes.insert(0, c.initial_pose);
+			addImuPriors(c);
 			c.isam_result = isamUpdate(c);
 			c.current_estimate = c.new_nodes;
 		}
@@ -636,6 +962,7 @@ void print_map(const MapType & m)
 				c.isam = std::make_shared<gtsam::ISAM2>(*cached->second.isam);
 				c.current_estimate = cached->second.estimate;
 				c.odometry_indices = cached->second.odometry_indices;
+				c.imu_indices = cached->second.imu_indices;
 				c.landmark_edge_indices = cached->second.landmark_edge_indices;
 				c.removed_edges.clear();
 				// updateGraph looks the factors up again through landmark_edge_indices
@@ -768,6 +1095,44 @@ void print_map(const MapType & m)
 		 * @param c the GLMB component
 		 */
 		double mergeLM(VectorGLMBComponent6D &c);
+		double splitLM(VectorGLMBComponent6D &c);
+
+		/** merge two landmarks holding a twin pair: measurements of one keypose at different octaves within 3 px whose descriptors are within mergeTwinMaxBits */
+		double mergeTwins(VectorGLMBComponent6D &c);
+
+		/** calculateWeight terms that depend on one landmark; det is -0.5 log det of its info with poses fixed */
+		struct LmTerms
+		{
+			double info = 0, desc = 0, scale = 0, pd = 0, miss = 0, exist = 0, chi = 0, det = 0;
+			int n = 0;
+			LmTerms &operator+=(const LmTerms &o)
+			{
+				info += o.info; desc += o.desc; scale += o.scale; pd += o.pd; miss += o.miss;
+				exist += o.exist; chi += o.chi; det += o.det; n += o.n;
+				return *this;
+			}
+		};
+		LmTerms lmTerms(VectorGLMBComponent6D &c, OrbslamMapPoint &lm);
+		/** twin_diag.csv: per applied twin merge, terms of src+dst before the move and after the re-optimization that follows it */
+		struct TwinDiag
+		{
+			int src, dst, nMoves, nClash;
+			LmTerms pre, post, opt; /**< post: right after the move; opt: after the re-optimization */
+		};
+		std::vector<std::vector<TwinDiag>> twinDiag_; /**< per component, this iteration */
+
+		/** scaleDescriptors: per-bin descriptors and refD of lm from its current associations */
+		void rebuildScaleDesc(VectorGLMBComponent6D &c, OrbslamMapPoint &lm);
+
+		/** true if landmark lmId is a gated candidate of measurement nz at pose k (only within [minpose_, maxpose_)) */
+		bool isCandidate(VectorGLMBComponent6D &c, int k, int nz, int lmId);
+
+		/**
+		 * Reassign the measurements (k, nz) of src to dst. A measurement colliding with one dst already holds
+		 * in that frame (same octave when multiOctave) becomes clutter. Does nothing and returns false if
+		 * dst is not a candidate of some other measurement; relaxed: dst only needs to be in that keypose's field of view.
+		 */
+		bool moveDetections(VectorGLMBComponent6D &c, OrbslamMapPoint &src, OrbslamMapPoint &dst, const std::vector<std::pair<int, int>> &moves, bool relaxed = false);
 
 		/**
 		 * Use the probabilities calculated in sampleDA to initialize landmarks from  false alarms.
@@ -780,7 +1145,7 @@ void print_map(const MapType & m)
 		 */
 		void changeDA(VectorGLMBComponent6D &c,
 					  const std::vector<
-						  boost::bimap<int, int, boost::container::allocator<int>>> &da);
+						  VectorGLMBComponent6D::FrameBimap> &da);
 
 		/**
 		 * print the data association in component c
@@ -865,11 +1230,11 @@ void print_map(const MapType & m)
 
 		std::vector<VectorGLMBComponent6D> components_; /**< VGLMB components */
 		double bestWeight_ = -std::numeric_limits<double>::infinity();
-		std::vector<boost::bimap<int, int, boost::container::allocator<int>>> best_DA_;
+		std::vector<VectorGLMBComponent6D::FrameBimap> best_DA_;
 		int best_DA_max_detection_time_ = 0; /**< last association time */
 
 		std::map<
-			std::vector<boost::bimap<int, int, boost::container::allocator<int>>>,
+			std::vector<VectorGLMBComponent6D::FrameBimap>,
 			EstimateWeight>
 			visited_;
 		// hashes and weights of entries dropped by visitedPruneLogRatio that the maxWeightDifference
@@ -886,6 +1251,7 @@ void print_map(const MapType & m)
 			gtsam::Values estimate;
 			boost::bimap<int, int> odometry_indices;
 			boost::bimap<std::array<int, 3>, int> landmark_edge_indices;
+			boost::bimap<std::pair<int, int>, int> imu_indices;
 		};
 		std::unordered_map<uint64_t, IsamState> isamCache_; /**< isamCacheSize: by daHash of the hypothesis */
 		size_t resampleHeld_ = 0, resampleCached_ = 0, resampleRebuilt_ = 0, resampleStale_ = 0;
@@ -898,6 +1264,7 @@ void print_map(const MapType & m)
 		int maxpose_ = 2; /**< optimize only up to this pose */
 		int maxpose_prev_ = 2;
 		int iteration_ = 0;
+		long mergeCount_ = 0, splitCount_ = 0, mergeTwinCount_ = 0; /**< applied mergeLM / splitLM / mergeTwins moves, all components */
 		int iterationBest_ = 0;
 		int lastGraphWriteIteration_ = -1000000; /**< iteration of the last video/beststate_* write */
 		double insertionP_ = 0.5;
@@ -1081,7 +1448,7 @@ void print_map(const MapType & m)
 
 	void VectorGLMBSLAM6D::changeDA(VectorGLMBComponent6D &c,
 									const std::vector<
-										boost::bimap<int, int, boost::container::allocator<int>>> &da)
+										VectorGLMBComponent6D::FrameBimap> &da)
 	{
 		// update bimaps!!!
 		c.DA_bimap_ = da;
@@ -1261,7 +1628,7 @@ void print_map(const MapType & m)
 						++assoc){
 							auto &lm = c.landmarks_[ assoc->second - c.landmarks_[0].id ];
 							lm.numDetections_--;
-							lm.is_detected.erase(k);
+							lm.eraseDetection(k);
 							if (lm.numDetections_ == 1){
 								int k_remove = * lm.is_detected.begin();
 								c.DA_bimap_[k_remove].right.erase(lm.id);
@@ -1286,6 +1653,8 @@ void print_map(const MapType & m)
 
 
 			for (auto keyValue : da1->second.estimate){
+				if (isNavKey(keyValue.key))
+					continue;
 				if (keyValue.key  < c.poses_.size()){
 					c.poses_[keyValue.key].pose =  keyValue.value.cast<PoseType>();
 				}else{
@@ -1456,6 +1825,8 @@ void print_map(const MapType & m)
 			std::cout << ni + 1 << "/" << nImages << "                                   \r";
 		}
 		std::cout << "\n";
+		if (config.imu_)
+			loadImu();
 	}
 
 	void VectorGLMBSLAM6D::computeStereoMatches(OrbslamPose &pose)
@@ -1706,6 +2077,62 @@ void print_map(const MapType & m)
 			config.rebuildIsamOnResample_ = node["rebuildIsamOnResample"].as<bool>();
 		if (node["maxRelDepthSigma"])
 			config.maxRelDepthSigma_ = node["maxRelDepthSigma"].as<double>();
+		if (node["maxDistanceFactor"])
+			config.maxDistanceFactor_ = node["maxDistanceFactor"].as<double>();
+		if (node["descOctaveScale"])
+		{
+			config.descOctaveScale_ = node["descOctaveScale"].as<std::vector<double>>();
+			if (config.descOctaveScale_.size() != 4 || !config.predictScale_)
+				throw std::runtime_error("descOctaveScale needs 4 values and predictScale");
+		}
+		if (node["scaleDescriptors"])
+			config.scaleDescriptors_ = node["scaleDescriptors"].as<bool>();
+		if (node["descScaleCost"])
+		{
+			config.descScaleCost_ = node["descScaleCost"].as<std::vector<double>>();
+			if (config.descScaleCost_.size() != 8)
+				throw std::runtime_error("descScaleCost needs 8 values");
+		}
+		if (node["mergeTwinMaxBits"])
+		{
+			config.mergeTwinMaxBits_ = node["mergeTwinMaxBits"].as<std::vector<double>>();
+			if (config.mergeTwinMaxBits_.size() != 3)
+				throw std::runtime_error("mergeTwinMaxBits needs 3 values");
+		}
+		if (node["visHMM"])
+		{
+			config.visHMM_ = node["visHMM"].as<std::vector<double>>();
+			if (config.visHMM_.size() != 3)
+				throw std::runtime_error("visHMM needs 3 values");
+			if (!node["pdOctaveRatio"])
+				throw std::runtime_error("visHMM needs pdOctaveRatio");
+		}
+		if (node["visInit"])
+			config.visInit_ = node["visInit"].as<double>();
+		if (node["visPDAngles"])
+			config.visPDAngles_ = node["visPDAngles"].as<std::vector<double>>();
+		if (node["visPD"])
+		{
+			config.visPD_ = node["visPD"].as<std::vector<double>>();
+			if (config.visPD_.size() != 7 * (config.visPDAngles_.size() + 1))
+				throw std::runtime_error("visPD needs 7 values per visPDAngles bin, plus 7 for the open bin");
+		}
+		if (node["mergeTwinAll"])
+			config.mergeTwinAll_ = node["mergeTwinAll"].as<bool>();
+		if (node["mergeTwinProb"])
+			config.mergeTwinProb_ = node["mergeTwinProb"].as<double>();
+		if (node["twinDiag"])
+			config.twinDiag_ = node["twinDiag"].as<bool>();
+		if (node["mergeLM"])
+			config.mergeLM_ = node["mergeLM"].as<bool>();
+		if (node["splitLM"])
+			config.splitLM_ = node["splitLM"].as<bool>();
+		if (node["pdOctaveRatio"])
+		{
+			config.pdOctaveRatio_ = node["pdOctaveRatio"].as<std::vector<double>>();
+			if (config.pdOctaveRatio_.size() != 7 || !config.predictScale_)
+				throw std::runtime_error("pdOctaveRatio needs 7 values and predictScale");
+		}
 		if (node["pdAngleTau"])
 		{
 			config.pdAngleTau_ = node["pdAngleTau"].as<double>();
@@ -1716,6 +2143,14 @@ void print_map(const MapType & m)
 			config.fullWindowAtEnd_ = node["fullWindowAtEnd"].as<bool>();
 		if (node["isamCacheSize"])
 			config.isamCacheSize_ = node["isamCacheSize"].as<size_t>();
+		if (node["dumpDACandidates"])
+			config.dumpDACandidates_ = node["dumpDACandidates"].as<size_t>();
+		if (node["scaleLogWeight"])
+			config.scaleLogWeight_ = node["scaleLogWeight"].as<double>();
+		if (node["descriptorLogWeight"])
+			ORBDescriptor::logWeightPerBit = node["descriptorLogWeight"].as<double>();
+		if (node["dumpDetections"])
+			config.dumpDetections_ = node["dumpDetections"].as<size_t>();
 		if (node["dumpIndeterminate"])
 			config.dumpIndeterminate_ = node["dumpIndeterminate"].as<size_t>();
 		if (node["dumpStallTop"])
@@ -1726,6 +2161,19 @@ void print_map(const MapType & m)
 			config.eliminateLandmarksFirst_ = node["eliminateLandmarksFirst"].as<bool>();
 		if (node["motionModel"])
 			config.motionModel_ = node["motionModel"].as<std::string>();
+		if (node["imu"])
+			config.imu_ = node["imu"].as<bool>();
+		if (node["imuNoise"])
+			config.imuNoise_ = node["imuNoise"].as<std::vector<double>>();
+		if (node["imuInitTime"])
+			config.imuInitTime_ = node["imuInitTime"].as<double>();
+		if (node["imuPriorSigmas"])
+			config.imuPriorSigmas_ = node["imuPriorSigmas"].as<std::vector<double>>();
+		if (config.imuNoise_.size() != 4 || config.imuPriorSigmas_.size() != 3)
+		{
+			std::cerr << "imuNoise needs 4 values and imuPriorSigmas 3\n";
+			exit(1);
+		}
 		if (config.motionModel_ != "brownian" && config.motionModel_ != "cv" && config.motionModel_ != "ca" && config.motionModel_ != "cj")
 		{
 			std::cerr << "unknown motionModel " << config.motionModel_ << "\n";
@@ -2086,9 +2534,110 @@ void print_map(const MapType & m)
 				std::ofstream(config.resultFolder + "/resample_stats.txt")
 					<< "iteration " << iteration_ << " held " << resampleHeld_ << " cached " << resampleCached_
 					<< " rebuilt " << resampleRebuilt_ << " stale " << resampleStale_ << " cacheSize " << isamCache_.size() << "\n";
+			if (config.mergeLM_ || config.splitLM_ || !config.mergeTwinMaxBits_.empty())
+				std::ofstream(config.resultFolder + "/merge_split.csv", std::ios::app)
+					<< iteration_ << "," << mergeCount_ << "," << splitCount_ << "," << mergeTwinCount_ << "\n";
 			if (config.maxRelDepthSigma_ > 0)
 				std::ofstream(config.resultFolder + "/gate_stats.csv", std::ios::app)
 					<< iteration_ << "," << lmDemoted_ << "," << lmGatedLast_ << "\n";
+			if (config.dumpDetections_ > 0 && iteration_ % config.dumpDetections_ == 0)
+			{
+				// one row per existing landmark in the field of view of a keypose, for the highest-weight component
+				auto best = std::max_element(components_.begin(), components_.end(),
+					[](const VectorGLMBComponent6D &a, const VectorGLMBComponent6D &b) { return a.logweight_ < b.logweight_; });
+				std::ofstream f(config.resultFolder + "/detections.csv");
+				// map, poses and raw stereo detections, for analysis that does not use the associations
+				auto hex = [](const ORBDescriptor &d) {
+					std::ostringstream s;
+					for (int i = 0; i < 4; i++)
+						s << std::hex << std::setw(16) << std::setfill('0') << ((d.desc >> (64 * i)) & std::bitset<256>(~0ULL)).to_ullong();
+					return s.str();
+				};
+				auto poseRow = [](const gtsam::Pose3 &p) {
+					std::ostringstream s;
+					auto q = p.rotation().toQuaternion();
+					s << std::setprecision(10) << p.x() << "," << p.y() << "," << p.z() << "," << q.w() << "," << q.x() << "," << q.y() << "," << q.z();
+					return s.str();
+				};
+				std::ofstream fm(config.resultFolder + "/map.csv");
+				fm << "lm,numDet,birthK,x,y,z,nx,ny,nz,minD,maxD,desc\n";
+				for (auto &lm : best->landmarks_)
+					if (lm.numDetections_ > 0)
+						fm << lm.id << "," << lm.numDetections_ << "," << lm.birthPose->id << "," << std::setprecision(10) << lm.position.x() << "," << lm.position.y() << ","
+						   << lm.position.z() << "," << lm.normalVector.x() << "," << lm.normalVector.y() << "," << lm.normalVector.z() << ","
+						   << lm.mfMinDistance << "," << lm.mfMaxDistance << "," << hex(lm.descriptor) << "\n";
+				std::ofstream fp(config.resultFolder + "/poses.csv");
+				fp << "k,isKeypose,cx,cy,cz,cqw,cqx,cqy,cqz,bx,by,bz,bqw,bqx,bqy,bqz\n";
+				for (int k = 0; k < maxpose_; k++)
+					fp << k << "," << best->poses_[k].isKeypose << "," << poseRow(best->poses_[k].pose) << ","
+					   << poseRow(best->poses_[k].pose * config.base_link_to_cam0_se3.inverse()) << "\n";
+				if (!std::ifstream(config.resultFolder + "/frames.csv").good())
+				{
+					std::ofstream ff(config.resultFolder + "/frames.csv");
+					ff << "k,nz,uL,uR,v,octave,descL,descR\n";
+					for (int k = 0; k < best->poses_.size(); k++)
+					{
+						auto &pose = best->poses_[k];
+						for (int nz = 0; nz < pose.stereo_points.size(); nz++)
+						{
+							auto &match = pose.matches_left_to_right[nz];
+							ff << k << "," << nz << "," << pose.stereo_points[nz].uL() << "," << pose.stereo_points[nz].uR() << "," << pose.stereo_points[nz].v() << ","
+							   << pose.keypoints_left[match.queryIdx].octave << "," << hex(pose.descriptors_left[match.queryIdx]) << "," << hex(pose.descriptors_right[match.trainIdx]) << "\n";
+						}
+					}
+				}
+				f << "k,nZ,lm,detected,numDet,numFoV,birthK,depth,cosView,predScale,octave\n";
+				// one row per stereo measurement of a keypose; lm is -1 when it is unassociated (clutter)
+				std::ofstream fz(config.resultFolder + "/measurements.csv");
+				fz << "k,nz,uL,uR,v,octave,lm,descDist,errPx,scaleDiff\n";
+				for (int k = 0; k < maxpose_; k++)
+				{
+					auto &pose = best->poses_[k];
+					if (!pose.isKeypose)
+						continue;
+					std::unordered_map<int, int> fovIndex;
+					for (int n = 0; n < pose.fov_.size(); n++)
+						fovIndex[pose.fov_[n]] = n;
+					for (int nz = 0; nz < pose.Z_.size(); nz++)
+					{
+						int octave = pose.keypoints_left[pose.matches_left_to_right[nz].queryIdx].octave;
+						auto &z = pose.stereo_points[nz];
+						fz << k << "," << nz << "," << z.uL() << "," << z.uR() << "," << z.v() << "," << octave;
+						auto assoc = best->DA_bimap_[k].left.find(nz);
+						if (assoc == best->DA_bimap_[k].left.end())
+						{
+							fz << ",-1,,,\n";
+							continue;
+						}
+						auto &lm = best->landmarks_[assoc->second - best->landmarks_[0].id];
+						Eigen::Vector3d pCam = pose.pose.transformTo(lm.position);
+						auto fovIt = fovIndex.find(lm.id);
+						fz << "," << lm.id << ","
+						   << lm.descriptor.likelihood(pose.descriptors_left[pose.matches_left_to_right[nz].queryIdx], pose.descriptors_right[pose.matches_left_to_right[nz].trainIdx]) / ORBDescriptor::logWeightPerBit << ",";
+						if (pCam.z() > 0)
+							fz << (z - best->camera.project(pCam)).vector().norm();
+						fz << ",";
+						if (fovIt != fovIndex.end())
+							fz << std::abs(pose.predicted_scales[fovIt->second] - octave);
+						fz << "\n";
+					}
+					for (int n = 0; n < pose.fov_.size(); n++)
+					{
+						auto &lm = best->landmarks_[pose.fov_[n] - best->landmarks_[0].id];
+						if (lm.numDetections_ == 0)
+							continue;
+						auto assoc = best->DA_bimap_[k].right.find(lm.id);
+						bool detected = assoc != best->DA_bimap_[k].right.end();
+						Eigen::Vector3d pCam = pose.pose.transformTo(lm.position);
+						Eigen::Vector3d pBirth = lm.birthPose->pose.transformTo(lm.position);
+						f << k << "," << pose.Z_.size() << "," << lm.id << "," << detected << "," << lm.numDetections_ << "," << lm.numFoV_ << ","
+						  << lm.birthPose->id << "," << pCam.norm() << ","
+						  << (pose.pose.rotation() * pCam).normalized().dot((lm.birthPose->pose.rotation() * pBirth).normalized()) << ","
+						  << pose.predicted_scales[n] << ","
+						  << (detected ? pose.keypoints_left[pose.matches_left_to_right[assoc->second].queryIdx].octave : -1) << "\n";
+					}
+				}
+			}
 		}
 		if (config.dumpStallTop_ > 0)
 		{
@@ -2211,7 +2760,7 @@ void print_map(const MapType & m)
 
 	void VectorGLMBSLAM6D::selectNN(VectorGLMBComponent6D &c)
 	{
-		std::vector<boost::bimap<int, int, boost::container::allocator<int>>> out;
+		std::vector<VectorGLMBComponent6D::FrameBimap> out;
 		out.resize(c.DA_bimap_.size());
 		for (int i = 0; i < maxpose_; i++)
 		{
@@ -2338,7 +2887,7 @@ void print_map(const MapType & m)
 						{
 
 							c.landmarks_[selectedDA - c.landmarks_[0].id].numDetections_--;
-							c.landmarks_[selectedDA - c.landmarks_[0].id].is_detected.erase(k);
+							c.landmarks_[selectedDA - c.landmarks_[0].id].eraseDetection(k);
 
 							assert(c.landmarks_[selectedDA - c.landmarks_[0].id].numDetections_ >= 0);
 							c.DA_bimap_[k].left.replace_data(it, newdai);
@@ -2349,7 +2898,7 @@ void print_map(const MapType & m)
 						c.DA_bimap_[k].left.erase(it);
 					if(selectedDA>=0){
 						c.landmarks_[selectedDA - c.landmarks_[0].id].numDetections_--;
-						c.landmarks_[selectedDA - c.landmarks_[0].id].is_detected.erase(k);
+						c.landmarks_[selectedDA - c.landmarks_[0].id].eraseDetection(k);
 						assert(c.landmarks_[selectedDA - c.landmarks_[0].id].numDetections_ >= 0);
 					}
 					}
@@ -2368,12 +2917,12 @@ void print_map(const MapType & m)
 #endif
 		if (maxpose_ == 0)
 		{
-			std::vector<boost::bimap<int, int, boost::container::allocator<int>>> out(
+			std::vector<VectorGLMBComponent6D::FrameBimap> out(
 				map1);
 			return out;
 		}
 		boost::uniform_int<> random_merge_point(minpose_, maxpose_-1);
-		std::vector<boost::bimap<int, int, boost::container::allocator<int>>> out;
+		std::vector<VectorGLMBComponent6D::FrameBimap> out;
 		out.resize(map1.size());
 		int merge_point = random_merge_point(rfs::randomGenerators_[threadnum]);
 
@@ -2404,6 +2953,7 @@ void print_map(const MapType & m)
 
 
 		traceRows_.assign(components_.size(), TraceRow());
+		twinDiag_.assign(components_.size(), {});
 		#pragma omp parallel for schedule(static)
 		for (int i = 0; i < components_.size(); i++)
 		{
@@ -2431,7 +2981,7 @@ void print_map(const MapType & m)
 
 			bool inserted;
 			std::map<
-			std::vector<boost::bimap<int, int, boost::container::allocator<int>>>,
+			std::vector<VectorGLMBComponent6D::FrameBimap>,
 			EstimateWeight>::iterator it;
 
 
@@ -2489,6 +3039,12 @@ void print_map(const MapType & m)
 						 //expectedChange += mergeLM(c);
 						break;
 					}
+					if (config.mergeLM_)
+						mergeLM(c);
+					if (config.splitLM_)
+						splitLM(c);
+					if (!config.mergeTwinMaxBits_.empty())
+						mergeTwins(c);
 
 
 					checkGraph(c);
@@ -2519,7 +3075,12 @@ void print_map(const MapType & m)
 
 					checkGraph(c);
 					updateFoV(c);
-					checkGraph(c);	
+					checkGraph(c);
+					for (auto &d : twinDiag_[i])
+					{
+						d.opt = lmTerms(c, c.landmarks_[d.src - c.landmarks_[0].id]);
+						d.opt += lmTerms(c, c.landmarks_[d.dst - c.landmarks_[0].id]);
+					}
 					updateDAProbs(c, minpose_, maxpose_);
 
 				}
@@ -2529,6 +3090,9 @@ void print_map(const MapType & m)
 					if(ng%2==0){
 						expectedChange += sampleDA(c);
 						//reverseSampleDA(c);
+					}else if (multiOctave()){
+						// reverseSampleDA gives a landmark at most one measurement per frame
+						sampleDA(c);
 					}else{
 						reverseSampleDA(c);
 						//expectedChange += sampleDA(c);
@@ -2595,6 +3159,21 @@ void print_map(const MapType & m)
 			updateFoV(c);
 
 			calculateWeight(c);
+			if (!twinDiag_[i].empty())
+#pragma omp critical(twindiag)
+			{
+				std::ofstream f(config.resultFolder + "/twin_diag.csv", std::ios::app);
+				auto put = [&](const LmTerms &t)
+				{ f << "," << t.n << "," << t.info << "," << t.desc << "," << t.scale << "," << t.pd << "," << t.miss << "," << t.exist << "," << t.chi << "," << t.det; };
+				for (auto &d : twinDiag_[i])
+				{
+					f << iteration_ << "," << i << "," << d.src << "," << d.dst << "," << d.nMoves << "," << d.nClash;
+					put(d.pre);
+					put(d.post);
+					put(d.opt);
+					f << "," << c.landmarks_[d.src - c.landmarks_[0].id].numDetections_ << "," << c.landmarks_[d.dst - c.landmarks_[0].id].numDetections_ << "," << c.logweight_ << "\n";
+				}
+			}
 
 			EstimateWeight to_insert;
 			to_insert.weight = c.logweight_;
@@ -2664,7 +3243,7 @@ void print_map(const MapType & m)
 				#pragma omp critical(bestweight)
 				cacheState = !isamCache_.count(pairHash) && (isamCache_.size() < config.isamCacheSize_ || c.logweight_ > cacheMin()->second.weight);
 				if (cacheState)
-					state = {c.logweight_, std::make_shared<gtsam::ISAM2>(*c.isam), c.current_estimate, c.odometry_indices, c.landmark_edge_indices};
+					state = {c.logweight_, std::make_shared<gtsam::ISAM2>(*c.isam), c.current_estimate, c.odometry_indices, c.landmark_edge_indices, c.imu_indices};
 			}
 
 			#pragma omp critical(bestweight)
@@ -2820,14 +3399,17 @@ void print_map(const MapType & m)
 							// 	}
 							// std::cout << "\n";
 							scale_logw += -std::numeric_limits<double>::infinity();
-						}else{
+						}
+						int scalediff = 0;
+						if (lmFovIdx >= 0)
+						{
 							int predictedScale = c.poses_[k].predicted_scales[lmFovIdx];
-							int scalediff = abs(predictedScale-c.poses_[k].keypoints_left[c.poses_[k].matches_left_to_right[nz].queryIdx].octave );
+							scalediff = abs(predictedScale-c.poses_[k].keypoints_left[c.poses_[k].matches_left_to_right[nz].queryIdx].octave );
 
-							scale_logw += 20-20.0*scalediff;
+							scale_logw += multiOctave() ? config.scaleLogWeight_ : config.scaleLogWeight_ * (1 - scalediff);
 						}
 						//int dist = ORBDescriptor::distance(lm.descriptor, c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
-						double desclikelihood = lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx] , c.poses_[k].descriptors_right[c.poses_[k].matches_left_to_right[nz].trainIdx]);
+						double desclikelihood = descLogLik(c.poses_[k], nz, lm, scalediff, false);
 
 						descriptor_logw += desclikelihood;
 						if (!std::isfinite(descriptor_logw)){
@@ -2846,6 +3428,28 @@ void print_map(const MapType & m)
 				}
 			}
 
+			if (visHMM())
+				continue;
+			if (multiOctave())
+			{
+				for (int lm = 0; lm < c.poses_[k].fov_.size(); lm++)
+				{
+					const double base = c.poses_[k].fov_pd[lm];
+					const int s = c.poses_[k].predicted_scales[lm];
+					int detected = 0;
+					for (auto r = c.DA_bimap_[k].right.equal_range(c.poses_[k].fov_[lm]); r.first != r.second; ++r.first)
+					{
+						int o = measOctave(c.poses_[k], r.first->second);
+						detected |= 1 << o;
+						pd_logw += std::log(slotPD(base, o - s));
+					}
+					if (c.landmarks_[c.poses_[k].fov_[lm] - c.landmarks_[0].id].numDetections_ > 0)
+						for (int o = std::max(0, s - 3); o <= std::min(c.poses_[k].mnScaleLevels - 1, s + 3); o++)
+							if (!(detected & (1 << o)))
+								pd_logw += std::log(1 - slotPD(base, o - s));
+				}
+				continue;
+			}
 			for (int lm = 0; lm < c.poses_[k].fov_.size(); lm++)
 			{
 
@@ -2862,6 +3466,13 @@ void print_map(const MapType & m)
 					}
 				}
 			}
+		}
+		if (visHMM())
+		{
+			visPass(c, -1);
+			for (auto &lm : c.landmarks_)
+				if (lm.numDetections_ > 0)
+					pd_logw += lm.visLogLik_;
 		}
 		logw += pd_logw;
 		logw += kappa_logw;
@@ -2899,15 +3510,16 @@ void print_map(const MapType & m)
 				if (!lmGated(c, lm))
 					continue;
 				numGated++;
-				for (int k : lm.is_detected)
+				for (auto kIt = lm.is_detected.begin(); kIt != lm.is_detected.end(); kIt = lm.is_detected.upper_bound(*kIt))
 				{
-					auto assoc = c.DA_bimap_[k].right.find(lm.id);
-					if (assoc == c.DA_bimap_[k].right.end())
-						continue;
-					int nz = assoc->second;
-					StereoMeasurementEdge f(c.poses_[k].stereo_points[nz], config.stereo_noise, k, lm.id, config.cam_params);
-					gtsam::Vector e = f.evaluateError(c.poses_[k].pose, lm.position, nullptr, nullptr);
-					chi_logw -= config.stereo_noise->loss(config.stereo_noise->squaredMahalanobisDistance(e));
+					int k = *kIt;
+					for (auto r = c.DA_bimap_[k].right.equal_range(lm.id); r.first != r.second; ++r.first)
+					{
+						int nz = r.first->second;
+						StereoMeasurementEdge f(c.poses_[k].stereo_points[nz], config.stereo_noise, k, lm.id, config.cam_params);
+						gtsam::Vector e = f.evaluateError(c.poses_[k].pose, lm.position, nullptr, nullptr);
+						chi_logw -= config.stereo_noise->loss(config.stereo_noise->squaredMahalanobisDistance(e));
+					}
 				}
 				double minDepth;
 				double det = landmarkInfo(c, lm, minDepth).determinant();
@@ -2943,7 +3555,9 @@ void print_map(const MapType & m)
 		{
 			max_detection_time--;
 		}
-		for (int k = 1; k <= max_detection_time; k++)
+		if (config.imu_)
+			updateImuGraph(c, max_detection_time);
+		for (int k = 1; k <= max_detection_time && !config.imu_; k++)
 		{
 			auto it = c.odometry_indices.left.find(k-1);
 			bool allKeyposes = true;
@@ -3165,12 +3779,20 @@ void print_map(const MapType & m)
 			assert(found);
 			int numdet=0;
 			for(int k=0;k< maxpose_;k++){
-				auto it = c.DA_bimap_[k].right.find(lm.id);
-				if (it != c.DA_bimap_[k].right.end()){
-					numdet++;
-					assert(lm.is_detected.count(k) == 1);
-				}else{
-					assert(lm.is_detected.count(k)==0);
+				int n = c.DA_bimap_[k].right.count(lm.id);
+				numdet += n;
+				assert(lm.is_detected.count(k) == n);
+				assert(n <= 1 || multiOctave());
+				if (n > 1)
+				{
+					// at most one measurement per octave
+					int seen = 0;
+					for (auto r = c.DA_bimap_[k].right.equal_range(lm.id); r.first != r.second; ++r.first)
+					{
+						int bit = 1 << measOctave(c.poses_[k], r.first->second);
+						assert(!(seen & bit));
+						seen |= bit;
+					}
 				}
 			}
 			assert(numdet==lm.numDetections_);
@@ -3257,8 +3879,12 @@ void print_map(const MapType & m)
 								birthL = candidates[e].l;
 						continue;
 					}
-					double maxl = -std::numeric_limits<double>::infinity();
-					int max_nz = -5;
+					// best free measurement per octave slot (a single slot unless multiOctave)
+					const int numSlots = multiOctave() ? c.poses_[k].mnScaleLevels : 1;
+					double maxl[16];
+					int max_nz[16];
+					std::fill(maxl, maxl + numSlots, -std::numeric_limits<double>::infinity());
+					std::fill(max_nz, max_nz + numSlots, -5);
 					for (; e < eEnd && candidates[e].k == k; e++)
 					{
 						auto &cand = candidates[e];
@@ -3268,18 +3894,20 @@ void print_map(const MapType & m)
 						{
 							continue;
 						}
-						if (cand.l > cand.l0 && cand.l > maxl)
+						int slot = multiOctave() ? measOctave(c.poses_[k], cand.nz) : 0;
+						if (cand.l > cand.l0 && cand.l > maxl[slot])
 						{
-							maxl = cand.l;
-							max_nz = cand.nz;
+							maxl[slot] = cand.l;
+							max_nz[slot] = cand.nz;
 						}
 					}
-					if (max_nz>=0){
-						c.DA_bimap_[k].insert( {max_nz, c.landmarks_[i].id});
-						expectedWeightChange += maxl - config.logKappa_;
-						c.landmarks_[i].numDetections_++;
-						c.landmarks_[i].is_detected.insert(k);
-					}
+					for (int slot = 0; slot < numSlots; slot++)
+						if (max_nz[slot]>=0){
+							c.DA_bimap_[k].insert( {max_nz[slot], c.landmarks_[i].id});
+							expectedWeightChange += maxl[slot] - config.logKappa_;
+							c.landmarks_[i].numDetections_++;
+							c.landmarks_[i].is_detected.insert(k);
+						}
 
 				}
 
@@ -3289,7 +3917,7 @@ void print_map(const MapType & m)
 				auto birth_it2 = c.DA_bimap_[kbirth].right.find(lm.id); 
 
 				if (birth_it2 == c.DA_bimap_[kbirth].right.end()){
-					if(lm.numDetections_== lm.numFoV_){
+					if(!multiOctave() && lm.numDetections_== lm.numFoV_){
 						std::cout << termcolor::red << "adding imposssible det_:\n" << termcolor::reset;
 						printDA(c);
 						assert(0);
@@ -3330,107 +3958,430 @@ void print_map(const MapType & m)
 
 	inline double VectorGLMBSLAM6D::mergeLM(VectorGLMBComponent6D &c)
 	{
-		double expectedWeightChange = 0;
 		int threadnum = 0;
 #ifdef _OPENMP
 		threadnum = omp_get_thread_num();
 #endif
-
-		
-		if (c.tomerge_.size() == 0)
-		{
-			std::cout << termcolor::blue << "no jumps so no merge \n"
-					  << termcolor::reset;
+		if (c.tomerge_.empty())
 			return 0;
-		}
-		int nummerge=1;
-		
-		//std::cout  << termcolor::red << "nummerge: " << nummerge << "\n" << termcolor::reset;
-		for(int i=0; i< nummerge ; i++){
-
-		if (c.tomerge_.size() == 0)
-			{
-				return 0;
-			}
-
 		boost::uniform_int<> random_pair(0, c.tomerge_.size() - 1);
-
-		int rp = random_pair(rfs::randomGenerators_[threadnum]);
-		int todelete = c.tomerge_[rp].first;
-
-		int toAddMeasurements = c.tomerge_[rp].second;
-
-		
-
-		if (c.landmarks_[toAddMeasurements - c.landmarks_[0].id].numDetections_ <  c.landmarks_[todelete - c.landmarks_[0].id].numDetections_ ){
-			todelete = c.tomerge_[rp].second;
-			toAddMeasurements = c.tomerge_[rp].first;
+		auto pair = c.tomerge_[random_pair(rfs::randomGenerators_[threadnum])];
+		c.tomerge_.clear();
+		auto *del = &c.landmarks_[pair.first - c.landmarks_[0].id];
+		auto *add = &c.landmarks_[pair.second - c.landmarks_[0].id];
+		if (add->numDetections_ < del->numDetections_)
+			std::swap(del, add);
+		if (del->numDetections_ == 0)
+			return 0;
+		std::vector<std::pair<int, int>> moves;
+		for (auto kIt = del->is_detected.begin(); kIt != del->is_detected.end(); kIt = del->is_detected.upper_bound(*kIt))
+			for (auto r = c.DA_bimap_[*kIt].right.equal_range(del->id); r.first != r.second; ++r.first)
+				moves.push_back({*kIt, r.first->second});
+		if (moveDetections(c, *del, *add, moves))
+		{
+#pragma omp atomic
+			mergeCount_++;
 		}
-		 auto &del_lm = c.landmarks_[todelete - c.landmarks_[0].id];
-		 auto &add_lm = c.landmarks_[toAddMeasurements - c.landmarks_[0].id];
-		 if (del_lm.numDetections_ ==0 ){
-			continue;
-		 }
+		checkNumDet(c);
+		return 0;
+	}
 
+	inline double VectorGLMBSLAM6D::splitLM(VectorGLMBComponent6D &c)
+	{
+		int threadnum = 0;
+#ifdef _OPENMP
+		threadnum = omp_get_thread_num();
+#endif
+		const int lmId0 = c.landmarks_[0].id;
+		boost::uniform_int<> random_k(minpose_, maxpose_ - 1);
+		for (int tries = 0; tries < 20; tries++)
+		{
+			int k = random_k(rfs::randomGenerators_[threadnum]);
+			auto &bm = c.DA_bimap_[k];
+			if (bm.empty())
+				continue;
+			boost::uniform_int<> random_nz(0, bm.size() - 1);
+			auto it = bm.left.begin();
+			std::advance(it, random_nz(rfs::randomGenerators_[threadnum]));
+			int nz = it->first;
+			auto &src = c.landmarks_[it->second - lmId0];
+			int dstId = c.poses_[k].initial_lm_id[nz];
+			if (dstId < 0 || dstId == src.id || c.landmarks_[dstId - lmId0].numDetections_ > 0)
+				continue;
+			int octave = measOctave(c.poses_[k], nz);
+			std::vector<std::pair<int, int>> moves;
+			for (auto kIt = src.is_detected.begin(); kIt != src.is_detected.end(); kIt = src.is_detected.upper_bound(*kIt))
+				for (auto r = c.DA_bimap_[*kIt].right.equal_range(src.id); r.first != r.second; ++r.first)
+					if (measOctave(c.poses_[*kIt], r.first->second) == octave)
+						moves.push_back({*kIt, r.first->second});
+			if (moves.size() == src.numDetections_)
+				continue;
+			if (moveDetections(c, src, c.landmarks_[dstId - lmId0], moves))
+			{
+#pragma omp atomic
+				splitCount_++;
+				break;
+			}
+		}
+		checkNumDet(c);
+		return 0;
+	}
+
+	inline double VectorGLMBSLAM6D::mergeTwins(VectorGLMBComponent6D &c)
+	{
+		int threadnum = 0;
+#ifdef _OPENMP
+		threadnum = omp_get_thread_num();
+#endif
+		const int lmId0 = c.landmarks_[0].id;
+		boost::uniform_int<> random_k(minpose_, maxpose_ - 1);
+		boost::uniform_real<> uni(0, 1);
+		std::vector<std::pair<int, int>> twins, moves; // twins: measurement pairs (nz, nz)
+		for (int tries = 0; tries < 20; tries++)
+		{
+			int k = random_k(rfs::randomGenerators_[threadnum]);
+			auto &pose = c.poses_[k];
+			auto &bm = c.DA_bimap_[k];
+			twins.clear();
+			for (auto a = bm.left.begin(); a != bm.left.end(); ++a)
+				for (auto b = std::next(a); b != bm.left.end(); ++b)
+				{
+					int dO = std::abs(measOctave(pose, a->first) - measOctave(pose, b->first));
+					if (a->second == b->second || dO == 0 || (pose.stereo_points[a->first] - pose.stereo_points[b->first]).vector().norm() > 3)
+						continue;
+					auto &ma = pose.matches_left_to_right[a->first], &mb = pose.matches_left_to_right[b->first];
+					double d = ORBDescriptor::distance(pose.descriptors_left[ma.queryIdx], pose.descriptors_left[mb.queryIdx]) + ORBDescriptor::distance(pose.descriptors_right[ma.trainIdx], pose.descriptors_right[mb.trainIdx]);
+					if (d <= config.mergeTwinMaxBits_[std::min(dO, 3) - 1])
+						twins.push_back({a->first, b->first});
+				}
+			if (twins.empty())
+				continue;
+			if (config.mergeTwinAll_)
+				std::shuffle(twins.begin(), twins.end(), rfs::randomGenerators_[threadnum]);
+			else
+			{
+				boost::uniform_int<> random_pair(0, twins.size() - 1);
+				twins = {twins[random_pair(rfs::randomGenerators_[threadnum])]};
+			}
+			bool merged = false;
+			for (auto [nzA, nzB] : twins)
+			{
+				if (config.mergeTwinAll_ && uni(rfs::randomGenerators_[threadnum]) >= config.mergeTwinProb_)
+					continue;
+				// earlier merges in this frame may have moved or dropped either measurement
+				auto ia = bm.left.find(nzA), ib = bm.left.find(nzB);
+				if (ia == bm.left.end() || ib == bm.left.end() || ia->second == ib->second)
+					continue;
+				auto *src = &c.landmarks_[ia->second - lmId0];
+				auto *dst = &c.landmarks_[ib->second - lmId0];
+				if (dst->numDetections_ < src->numDetections_)
+					std::swap(src, dst);
+				moves.clear();
+				for (auto kIt = src->is_detected.begin(); kIt != src->is_detected.end(); kIt = src->is_detected.upper_bound(*kIt))
+					for (auto r = c.DA_bimap_[*kIt].right.equal_range(src->id); r.first != r.second; ++r.first)
+						moves.push_back({*kIt, r.first->second});
+				TwinDiag diag{src->id, dst->id, (int)moves.size(), dst->numDetections_};
+				if (config.twinDiag_)
+				{
+					diag.pre = lmTerms(c, *src);
+					diag.pre += lmTerms(c, *dst);
+				}
+				if (!moveDetections(c, *src, *dst, moves, true))
+					continue;
+				merged = true;
+				diag.nClash = diag.nMoves - (dst->numDetections_ - diag.nClash);
+				if (config.scaleDescriptors_)
+					rebuildScaleDesc(c, *dst);
+				if (config.twinDiag_)
+				{
+					diag.post = lmTerms(c, *src);
+					diag.post += lmTerms(c, *dst);
+					twinDiag_[&c - components_.data()].push_back(diag);
+				}
+#pragma omp atomic
+				mergeTwinCount_++;
+			}
+			if (merged)
+				break;
+		}
+		checkNumDet(c);
+		return 0;
+	}
+
+	inline void VectorGLMBSLAM6D::visPass(VectorGLMBComponent6D &c, int wmin)
+	{
+		const int nlm = c.landmarks_.size(), lmId0 = c.landmarks_[0].id;
+		const double a = config.visHMM_[0], b = config.visHMM_[1];
+		const double init = config.visInit_ >= 0 ? config.visInit_ : b / (1 - a + b);
+		const bool window = wmin >= 0;
+		std::call_once(visOnce_, [&] { visBuildTables(c.poses_[0].mnScaleLevels, c.poses_.size()); });
+		// forward: filtered P(visible) of each landmark at its latest FoV entry, as associated (D) and with all misses (M);
+		// track likelihoods are running products of the normalizers, folded into logs before they underflow
+		thread_local std::vector<double> alphaD, alphaM, prodD, prodM, muV, muO;
+		thread_local std::vector<int> lastK;
+		thread_local std::vector<std::vector<std::array<double, 3>>> win; // window entries: predicted P(visible), emissions
+		alphaD.assign(nlm, 0);
+		alphaM.assign(nlm, 0);
+		prodD.assign(nlm, 1);
+		prodM.assign(nlm, 1);
+		lastK.assign(nlm, -1);
+		for (auto &lm : c.landmarks_)
+			lm.visLogLik_ = lm.visLogMiss_ = 0;
+		if (window && win.size() < maxpose_ - wmin)
+			win.resize(maxpose_ - wmin);
+		constexpr double fold = 1e-250;
 		for (int k = 0; k < maxpose_; k++)
 		{
-			auto it = c.DA_bimap_[k].right.find(todelete);
-			auto itadd = c.DA_bimap_[k].right.find(toAddMeasurements);
-
-			if (it != c.DA_bimap_[k].right.end())
+			auto &pose = c.poses_[k];
+			const bool inWin = window && k >= wmin;
+			if (inWin)
 			{
-				if (itadd != c.DA_bimap_[k].right.end()){
-					c.DA_bimap_[k].right.erase(it);
-					c.landmarks_[todelete - c.landmarks_[0].id].numDetections_--;
-					c.landmarks_[todelete - c.landmarks_[0].id].is_detected.erase(k);
-					
-					assert(c.landmarks_[todelete - c.landmarks_[0].id].numDetections_ >= 0);
-					continue;
+				pose.fov_abin.resize(pose.fov_.size());
+				pose.fov_rho.resize(pose.fov_.size());
+				win[k - wmin].resize(pose.fov_.size());
+			}
+			for (int f = 0; f < pose.fov_.size(); f++)
+			{
+				const int i = pose.fov_[f] - lmId0;
+				auto &lm = c.landmarks_[i];
+				const int abin = visAngleBin(pose, lm);
+				double ev, eo, mv, mo;
+				visEmission(c, k, f, abin, true, mv, mo);
+				if (lm.numDetections_ > 0 && lm.is_detected.find(k) != lm.is_detected.end())
+					visEmission(c, k, f, abin, false, ev, eo);
+				else
+					ev = mv, eo = mo;
+				double pD = init, pM = init;
+				if (lastK[i] >= 0)
+				{
+					auto [vv, ov] = visTrans(k - lastK[i]);
+					pD = alphaD[i] * vv + (1 - alphaD[i]) * ov;
+					pM = alphaM[i] * vv + (1 - alphaM[i]) * ov;
 				}
-
-				// for (int l = 0; l < c.DAProbs_[k][it->second].i.size(); l++)
-				// {
-				// 	if (c.DAProbs_[k][it->second].i[l] == it->first)
-				// 	{
-
-				// 		expectedWeightChange -= c.DAProbs_[k][it->second].l[l];
-				// 		break;
-				// 	}
-				// }
-				c.landmarks_[todelete - c.landmarks_[0].id].numDetections_--;
-				c.landmarks_[todelete - c.landmarks_[0].id].is_detected.erase(k);
-				assert(c.landmarks_[todelete - c.landmarks_[0].id].numDetections_ == c.landmarks_[todelete - c.landmarks_[0].id].is_detected.size());
-				assert(c.landmarks_[todelete - c.landmarks_[0].id].numDetections_ >= 0);
-				c.landmarks_[toAddMeasurements - c.landmarks_[0].id].numDetections_++;
-				c.landmarks_[toAddMeasurements - c.landmarks_[0].id].is_detected.insert(k);
-
-				assert( c.landmarks_[toAddMeasurements - c.landmarks_[0].id].numDetections_ == c.landmarks_[toAddMeasurements - c.landmarks_[0].id].is_detected.size());
-
-
-				bool result = c.DA_bimap_[k].right.replace_key(it, toAddMeasurements);
-				if (!result){
-
-					std::cerr << termcolor::red  << "key not replaced\n"<< termcolor::reset;
+				double nv = pD * ev, z = nv + (1 - pD) * eo;
+				alphaD[i] = nv / z;
+				if ((prodD[i] *= z) < fold)
+					lm.visLogLik_ += std::log(prodD[i]), prodD[i] = 1;
+				nv = pM * mv, z = nv + (1 - pM) * mo;
+				alphaM[i] = nv / z;
+				if ((prodM[i] *= z) < fold)
+					lm.visLogMiss_ += std::log(prodM[i]), prodM[i] = 1;
+				lastK[i] = k;
+				if (inWin)
+				{
+					pose.fov_abin[f] = abin;
+					win[k - wmin][f] = {pD, ev, eo};
 				}
 			}
 		}
-		if (c.landmarks_[todelete - c.landmarks_[0].id].numDetections_ != 0)
+		for (int i = 0; i < nlm; i++)
 		{
-			std::cerr << "landmark  numDetections_ not zero"
-					  << c.landmarks_[todelete - c.landmarks_[0].id].numDetections_
-					  << "\n";
+			c.landmarks_[i].visLogLik_ += std::log(prodD[i]);
+			c.landmarks_[i].visLogMiss_ += std::log(prodM[i]);
 		}
-
-		for (int n=0; n <c.tomerge_.size(); n++){
-			if (c.tomerge_[n].first == todelete || c.tomerge_[n].second == todelete || c.tomerge_[n].first == toAddMeasurements || c.tomerge_[n].second == toAddMeasurements){
-				c.tomerge_[n] = c.tomerge_[c.tomerge_.size()-1];
-				c.tomerge_.pop_back();
+		if (!window)
+			return;
+		// backward over the window: mu = emission times backward message at the landmark's next FoV entry, rescaled
+		muV.assign(nlm, 1);
+		muO.assign(nlm, 1);
+		lastK.assign(nlm, -1);
+		for (int k = maxpose_ - 1; k >= wmin; k--)
+		{
+			auto &pose = c.poses_[k];
+			for (int f = 0; f < pose.fov_.size(); f++)
+			{
+				const int i = pose.fov_[f] - lmId0;
+				double bv = 1, bo = 1;
+				if (lastK[i] >= 0)
+				{
+					auto [vv, ov] = visTrans(lastK[i] - k);
+					bv = vv * muV[i] + (1 - vv) * muO[i];
+					bo = ov * muV[i] + (1 - ov) * muO[i];
+				}
+				auto &w = win[k - wmin][f];
+				pose.fov_rho[f] = w[0] * bv / (w[0] * bv + (1 - w[0]) * bo);
+				double v = w[1] * bv, o = w[2] * bo, s = v + o;
+				muV[i] = v / s;
+				muO[i] = o / s;
+				lastK[i] = k;
 			}
 		}
+	}
+
+	inline VectorGLMBSLAM6D::LmTerms VectorGLMBSLAM6D::lmTerms(VectorGLMBComponent6D &c, OrbslamMapPoint &lm)
+	{
+		LmTerms t;
+		const double info = -0.5 * (3 * std::log(2 * M_PI) - std::log(config.stereoInfo_.determinant()));
+		// refit the position by IRLS with poses fixed, so pre and post are compared at their own optimum
+		const gtsam::Point3 saved = lm.position;
+		for (int iter = 0; iter < 10 && lm.numDetections_ > 0; iter++)
+		{
+			Eigen::Matrix3d H = Eigen::Matrix3d::Zero();
+			Eigen::Vector3d g = Eigen::Vector3d::Zero();
+			for (auto kIt = lm.is_detected.begin(); kIt != lm.is_detected.end(); kIt = lm.is_detected.upper_bound(*kIt))
+				for (auto r = c.DA_bimap_[*kIt].right.equal_range(lm.id); r.first != r.second; ++r.first)
+				{
+					StereoMeasurementEdge e(c.poses_[*kIt].stereo_points[r.first->second], config.stereo_noise, *kIt, lm.id, config.cam_params);
+					gtsam::Matrix J;
+					gtsam::Vector res;
+					try
+					{
+						res = e.evaluateError(c.poses_[*kIt].pose, lm.position, nullptr, &J);
+					}
+					catch (const gtsam::StereoCheiralityException &)
+					{
+						continue;
+					}
+					double w = config.stereo_noise->robust()->weight(std::sqrt(res.dot(config.stereoInfo_ * res)));
+					H += w * J.transpose() * config.stereoInfo_ * J;
+					g += w * J.transpose() * config.stereoInfo_ * res;
+				}
+			if (H.determinant() <= 0)
+				break;
+			lm.position = lm.position - H.ldlt().solve(g);
 		}
-		c.tomerge_.clear();
-		checkNumDet(c);
-		return expectedWeightChange;
+		for (int k = 0; k < c.poses_.size(); k++)
+		{
+			auto &pose = c.poses_[k];
+			if (!pose.isKeypose)
+				continue;
+			auto f = std::find(pose.fov_.begin(), pose.fov_.end(), lm.id);
+			if (f == pose.fov_.end())
+				continue;
+			int fi = f - pose.fov_.begin();
+			int s = pose.predicted_scales[fi];
+			int detected = 0;
+			for (auto r = c.DA_bimap_[k].right.equal_range(lm.id); r.first != r.second; ++r.first)
+			{
+				int nz = r.first->second;
+				int o = measOctave(pose, nz);
+				int scalediff = std::abs(s - o);
+				t.n++;
+				t.info += info;
+				t.scale += multiOctave() ? config.scaleLogWeight_ : config.scaleLogWeight_ * (1 - scalediff);
+				t.desc += descLogLik(pose, nz, lm, scalediff, false);
+				StereoMeasurementEdge e(pose.stereo_points[nz], config.stereo_noise, k, lm.id, config.cam_params);
+				t.chi -= config.stereo_noise->loss(config.stereo_noise->squaredMahalanobisDistance(e.evaluateError(pose.pose, lm.position, nullptr, nullptr)));
+				if (multiOctave())
+				{
+					detected |= 1 << o;
+					t.pd += std::log(slotPD(pose.fov_pd[fi], o - s));
+				}
+			}
+			if (lm.numDetections_ == 0)
+				continue;
+			if (multiOctave())
+			{
+				for (int o = std::max(0, s - 3); o <= std::min(pose.mnScaleLevels - 1, s + 3); o++)
+					if (!(detected & (1 << o)))
+						t.miss += std::log(1 - slotPD(pose.fov_pd[fi], o - s));
+			}
+			else if (c.DA_bimap_[k].right.count(lm.id) > 0)
+				t.pd += std::log(fovPD(pose, fi));
+			else
+				t.miss += std::log(1 - fovPD(pose, fi));
+		}
+		if (lm.numDetections_ > 0)
+		{
+			t.exist = config.logExistenceOdds;
+			double minDepth;
+			double det = landmarkInfo(c, lm, minDepth).determinant();
+			if (det > 0)
+				t.det = -0.5 * std::log(det);
+		}
+		lm.position = saved;
+		return t;
+	}
+
+	inline void VectorGLMBSLAM6D::rebuildScaleDesc(VectorGLMBComponent6D &c, OrbslamMapPoint &lm)
+	{
+		struct BinAcc
+		{
+			int bin;
+			int n = 0;
+			double level0 = 0;
+			std::array<int, 256> cnt{};
+		};
+		thread_local std::vector<BinAcc> acc;
+		acc.clear();
+		for (auto kIt = lm.is_detected.begin(); kIt != lm.is_detected.end(); kIt = lm.is_detected.upper_bound(*kIt))
+			for (auto r = c.DA_bimap_[*kIt].right.equal_range(lm.id); r.first != r.second; ++r.first)
+			{
+				auto &pose = c.poses_[*kIt];
+				auto &m = pose.matches_left_to_right[r.first->second];
+				int level = pose.keypoints_left[m.queryIdx].octave;
+				double depth = (lm.position - pose.pose.translation()).norm();
+				int bin = scaleBin(pose, depth, level);
+				auto a = std::find_if(acc.begin(), acc.end(), [&](const BinAcc &x) { return x.bin == bin; });
+				if (a == acc.end())
+					a = acc.insert(acc.end(), BinAcc{bin});
+				a->n++;
+				a->level0 += depth * pose.mvScaleFactors[level];
+				auto &dl = pose.descriptors_left[m.queryIdx].desc, &dr = pose.descriptors_right[m.trainIdx].desc;
+				for (int i = 0; i < 256; i++)
+					a->cnt[i] += dl[i] + dr[i];
+			}
+		if (acc.empty())
+		{
+			resetScaleDesc(lm);
+			return;
+		}
+		std::sort(acc.begin(), acc.end(), [](const BinAcc &a, const BinAcc &b) { return a.bin < b.bin; });
+		lm.scaleDesc.clear();
+		const BinAcc *mode = &acc[0];
+		for (auto &a : acc)
+		{
+			ORBDescriptor d;
+			for (int i = 0; i < 256; i++)
+				d.desc[i] = a.cnt[i] > a.n;
+			lm.scaleDesc.push_back({a.bin, d});
+			if (a.n > mode->n)
+				mode = &a;
+		}
+		if (config.predictScaleNoMargin_)
+			lm.mfScaleRefDistance = mode->level0 / mode->n;
+	}
+
+	inline bool VectorGLMBSLAM6D::isCandidate(VectorGLMBComponent6D &c, int k, int nz, int lmId)
+	{
+		if (k < minpose_ || k >= maxpose_ || nz >= c.DAProbs_[k].size())
+			return false;
+		auto &i = c.DAProbs_[k][nz].i;
+		return std::find(i.begin(), i.end(), lmId) != i.end();
+	}
+
+	inline bool VectorGLMBSLAM6D::moveDetections(VectorGLMBComponent6D &c, OrbslamMapPoint &src, OrbslamMapPoint &dst, const std::vector<std::pair<int, int>> &moves, bool relaxed)
+	{
+		auto inFoV = [&](int k)
+		{
+			auto &fov = c.poses_[k].fov_;
+			return k >= minpose_ && k < maxpose_ && std::find(fov.begin(), fov.end(), dst.id) != fov.end();
+		};
+		auto clashes = [&](int k, int nz)
+		{
+			for (auto r = c.DA_bimap_[k].right.equal_range(dst.id); r.first != r.second; ++r.first)
+				if (!multiOctave() || measOctave(c.poses_[k], r.first->second) == measOctave(c.poses_[k], nz))
+					return true;
+			return false;
+		};
+		for (auto [k, nz] : moves)
+			if (!clashes(k, nz) && !(relaxed ? inFoV(k) : isCandidate(c, k, nz, dst.id)))
+				return false;
+		for (auto [k, nz] : moves)
+		{
+			auto it = c.DA_bimap_[k].left.find(nz);
+			src.numDetections_--;
+			src.eraseDetection(k);
+			if (clashes(k, nz))
+			{
+				c.DA_bimap_[k].left.erase(it);
+				continue;
+			}
+			c.DA_bimap_[k].left.replace_data(it, dst.id);
+			dst.numDetections_++;
+			dst.is_detected.insert(k);
+		}
+		return true;
 	}
 
 	inline double VectorGLMBSLAM6D::sampleLMDeath(VectorGLMBComponent6D &c)
@@ -3441,6 +4392,8 @@ void print_map(const MapType & m)
 #ifdef _OPENMP
 		threadnum = omp_get_thread_num();
 #endif
+		if (visHMM())
+			visPass(c, -1);
 
 		for (int i = 0; i < c.landmarks_.size(); i++)
 		{
@@ -3452,7 +4405,21 @@ void print_map(const MapType & m)
 				continue;
 			}
 
-			if (config.pdAngleTau_ > 0)
+			if (visHMM())
+			{
+				auto &lm = c.landmarks_[i];
+				c.landmarksResetProb_[i] = lm.numDetections_ * config.logKappa_ - lm.visLogLik_ - config.logExistenceOdds;
+			}
+			else if (multiOctave())
+			{
+				auto &lm = c.landmarks_[i];
+				double logPDOddsDet = 0;
+				for (auto kIt = lm.is_detected.begin(); kIt != lm.is_detected.end(); kIt = lm.is_detected.upper_bound(*kIt))
+					for (auto r = c.DA_bimap_[*kIt].right.equal_range(lm.id); r.first != r.second; ++r.first)
+						logPDOddsDet += detLogOdds(c.poses_[*kIt], lm, measOctave(c.poses_[*kIt], r.first->second));
+				c.landmarksResetProb_[i] = lm.numDetections_ * config.logKappa_ - logPDOddsDet - lmLogMiss(lm) - config.logExistenceOdds;
+			}
+			else if (config.pdAngleTau_ > 0)
 			{
 				double logPDOddsDet = 0;
 				for (int k : c.landmarks_[i].is_detected)
@@ -3499,7 +4466,7 @@ void print_map(const MapType & m)
 						// 		break;
 						// 	}
 						// }
-						c.DA_bimap_[k].right.erase(it);
+						c.DA_bimap_[k].right.erase(c.landmarks_[i].id);
 					}
 				}
 				expectedWeightChange +=-config.logExistenceOdds;
@@ -3867,7 +4834,7 @@ void print_map(const MapType & m)
 								auto birth_it2 = c.DA_bimap_[kbirth].right.find(lmidx); 
 
 								if (birth_it2 == c.DA_bimap_[kbirth].right.end()){
-									if(lm.numDetections_== lm.numFoV_){
+									if(!multiOctave() && lm.numDetections_== lm.numFoV_){
 										std::cout << termcolor::red << "adding imposssible det_:\n" << termcolor::reset;
 										printDA(c);
 										assert(0);
@@ -3893,7 +4860,7 @@ void print_map(const MapType & m)
 						c.DA_bimap_[k].right.erase(it);
 						measAssoc.set(k, prevDA, false);
 						lm.numDetections_--;
-						lm.is_detected.erase(k);
+						lm.eraseDetection(k);
 						assert(lm.numDetections_ == lm.is_detected.size() );
 						assert(lm.numDetections_ >= 0);
 					}
@@ -3927,16 +4894,19 @@ void print_map(const MapType & m)
 		std::fill(c.landmarksResetProb_.begin(), c.landmarksResetProb_.end(),
 				  -config.logExistenceOdds);
 		std::fill(c.landmarksInitProb_.begin(), c.landmarksInitProb_.end(), config.logExistenceOdds);
-		// lmAssocStamp[lm index] == stampBase+k+1  <=>  DA_bimap_[k].right contains the landmark
+		// lmAssocStamp[slot] == stampBase+k+1  <=>  in frame k the landmark holds a measurement in that slot;
+		// one slot per landmark, or one per landmark and octave with multiOctave
+		const int numSlots = multiOctave() ? c.poses_[0].mnScaleLevels : 1;
+		auto slot = [&](int lmIndex, int k, int nz) { return lmIndex * numSlots + (numSlots > 1 ? measOctave(c.poses_[k], nz) : 0); };
 		int stampBase;
-		std::vector<int> &lmAssocStamp = landmarkMarks(c.landmarks_.size(), maxpose_, stampBase);
+		std::vector<int> &lmAssocStamp = landmarkMarks(c.landmarks_.size() * numSlots, maxpose_, stampBase);
 		const int lmId0 = c.landmarks_[0].id;
 		MeasurementAssociationFlags measAssoc;
 		measAssoc.build(c, minpose_, maxpose_);
 		for (int k = minpose_; k < maxpose_; k++)
 		{
 			for (auto &assoc : c.DA_bimap_[k].left)
-				lmAssocStamp[assoc.second - lmId0] = stampBase + k + 1;
+				lmAssocStamp[slot(assoc.second - lmId0, k, assoc.first)] = stampBase + k + 1;
 
 			for (int nz = 0; nz < c.DAProbs_[k].size(); nz++)
 			{
@@ -4004,13 +4974,16 @@ void print_map(const MapType & m)
 							// unborn landmark outside the birth window: reject before the bimap lookups
 							if (lm.numDetections_ == 0 && !(lm.birthTime_ < c.poses_[k].stamp && lm.birthTime_ > c.poses_[k].stamp - 1.0))
 								continue;
-							if (lmAssocStamp[c.DAProbs_[k][nz].i[a] - lmId0] != stampBase + k + 1)
+							if (lmAssocStamp[slot(c.DAProbs_[k][nz].i[a] - lmId0, k, nz)] != stampBase + k + 1)
 							{ // landmark is not already associated to another measurement
 
 								if (c.landmarks_[c.DAProbs_[k][nz].i[a] - c.landmarks_[0].id].numDetections_ == 0)
 								{
 									int kbirth  = lm.birthPose->id;
-									if (!measAssoc.associated(c, kbirth, lm.birthMatch)){ // if lm spawn measurement is associated then not sample
+									// multiOctave: the birth measurement, added below, needs its octave slot
+									bool birthSlotTaken = numSlots > 1 && k == kbirth && nz != lm.birthMatch
+										&& measOctave(c.poses_[k], nz) == measOctave(c.poses_[k], lm.birthMatch);
+									if (!birthSlotTaken && !measAssoc.associated(c, kbirth, lm.birthMatch)){ // if lm spawn measurement is associated then not sample
 										if (lm.birthTime_ < c.poses_[k].stamp
 										&& lm.birthTime_ > c.poses_[k].stamp-1.0){
 											likelihood +=
@@ -4105,7 +5078,7 @@ void print_map(const MapType & m)
 							assert(result.second);
 							if (result.second)
 							{
-								lmAssocStamp[probs.i[sample] - lmId0] = stampBase + k + 1;
+								lmAssocStamp[slot(probs.i[sample] - lmId0, k, nz)] = stampBase + k + 1;
 								measAssoc.set(k, nz, true);
 							}
 						}
@@ -4114,14 +5087,14 @@ void print_map(const MapType & m)
 							auto &prev_lm = c.landmarks_[selectedDA - c.landmarks_[0].id];
 
 							prev_lm.numDetections_--;
-							prev_lm.is_detected.erase(k);
+							prev_lm.eraseDetection(k);
 							assert(prev_lm.numDetections_ >= 0);
 							auto result = c.DA_bimap_[k].left.replace_data(it, probs.i[sample]);
 							assert(result);
 							if (result)
 							{
-								lmAssocStamp[selectedDA - lmId0] = 0;
-								lmAssocStamp[probs.i[sample] - lmId0] = stampBase + k + 1;
+								lmAssocStamp[slot(selectedDA - lmId0, k, nz)] = 0;
+								lmAssocStamp[slot(probs.i[sample] - lmId0, k, nz)] = stampBase + k + 1;
 							}
 
 							// add an log for possible landmark merge
@@ -4133,9 +5106,10 @@ void print_map(const MapType & m)
 							
 							auto birth_it = c.DA_bimap_[kbirth].left.find(lm.birthMatch);
 							if (birth_it == c.DA_bimap_[kbirth].left.end()){
-								auto birth_it2 = c.DA_bimap_[kbirth].right.find(probs.i[sample]); 
-								if (birth_it2 == c.DA_bimap_[kbirth].right.end()){
-									if(lm.numDetections_== lm.numFoV_){
+								auto birth_it2 = c.DA_bimap_[kbirth].right.find(probs.i[sample]);
+								// multiOctave: lm may hold another octave in the birth frame; its birth slot is free (birthSlotTaken)
+								if (numSlots > 1 || birth_it2 == c.DA_bimap_[kbirth].right.end()){
+									if(!multiOctave() && lm.numDetections_== lm.numFoV_){
 										std::cout << termcolor::red << " sampling: adding imposssible det_:\n" << termcolor::reset;
 										printDA(c);
 										assert(0);
@@ -4143,7 +5117,7 @@ void print_map(const MapType & m)
 									auto result = c.DA_bimap_[kbirth].insert({c.landmarks_[probs.i[sample] - c.landmarks_[0].id].birthMatch, probs.i[sample] });
 									assert(result.second);
 									if (result.second && kbirth == k)
-										lmAssocStamp[probs.i[sample] - lmId0] = stampBase + k + 1;
+										lmAssocStamp[slot(probs.i[sample] - lmId0, k, lm.birthMatch)] = stampBase + k + 1;
 									if (result.second)
 										measAssoc.set(kbirth, c.landmarks_[probs.i[sample] - c.landmarks_[0].id].birthMatch, true);
 									lm.numDetections_++;
@@ -4159,10 +5133,10 @@ void print_map(const MapType & m)
 					else
 					{ // if a change has to be made and new DA is false alarm, we need to remove the association
 						c.DA_bimap_[k].left.erase(it);
-						lmAssocStamp[selectedDA - lmId0] = 0;
+						lmAssocStamp[slot(selectedDA - lmId0, k, nz)] = 0;
 						measAssoc.set(k, nz, false);
 						c.landmarks_[selectedDA - c.landmarks_[0].id].numDetections_--;
-						c.landmarks_[selectedDA - c.landmarks_[0].id].is_detected.erase(k);
+						c.landmarks_[selectedDA - c.landmarks_[0].id].eraseDetection(k);
 						assert(c.landmarks_[selectedDA - c.landmarks_[0].id].numDetections_ >= 0);
 						assert(c.landmarks_[selectedDA - c.landmarks_[0].id].numDetections_ == c.landmarks_[selectedDA - c.landmarks_[0].id].is_detected.size());
 					}
@@ -4182,6 +5156,7 @@ void print_map(const MapType & m)
 		c.landmark_edge_indices.clear();
 		c.removed_edges.clear();
 		c.odometry_indices.clear();
+		c.imu_indices.clear();
 		c.new_edges.resize (0);
 		c.new_nodes.clear();
 
@@ -4199,6 +5174,7 @@ void print_map(const MapType & m)
 		//c.new_edges.push_back(c.odometries_[0]);
 		c.new_edges.addPrior(0 , c.initial_pose , config.odom_noise );
 		c.new_nodes.insert(0 , c.initial_pose);
+		addImuPriors(c);
 
 		
 
@@ -4232,13 +5208,11 @@ void print_map(const MapType & m)
 					distances_after.clear();
 
 
-					for (int k : map_point.is_detected){
-
-						
-						
-						auto it = c.DA_bimap_[k].right.find(map_point.id);
-						assert ( it != c.DA_bimap_[k].right.end() );
-						int nz = it->second;
+					// each associated measurement once
+					for (auto kIt = map_point.is_detected.begin(); kIt != map_point.is_detected.end(); kIt = map_point.is_detected.upper_bound(*kIt))
+					for (auto r = c.DA_bimap_[*kIt].right.equal_range(map_point.id); r.first != r.second; ++r.first){
+						int k = *kIt;
+						int nz = r.first->second;
 						int nl = c.poses_[k].matches_left_to_right[nz].queryIdx;
 						int nr = c.poses_[k].matches_left_to_right[nz].trainIdx;
 						auto &desc_left = c.poses_[k].descriptors_left[nl];
@@ -4281,6 +5255,8 @@ void print_map(const MapType & m)
 					map_point.mfScaleRefDistance = config.predictScaleNoMargin_ ? avg_depth : map_point.mfMaxDistance;
 					//assert(map_point.mfMaxDistance<10.0);
 					map_point.mfMinDistance = std::min(map_point.mfMaxDistance / c.poses_[0].mvScaleFactors[ c.poses_[0].mnScaleLevels - 1] * 0.4 , 0.6*min_depth);
+					if (config.maxDistanceFactor_ > 0)
+						map_point.mfMaxDistance = std::max(config.maxDistanceFactor_ * avg_depth, 1.05 * max_depth);
 
 					assert(max_depth < map_point.mfMaxDistance);
 					assert(min_depth > map_point.mfMinDistance);
@@ -4307,7 +5283,7 @@ void print_map(const MapType & m)
 						// }
 						
 					}
-					if (max_dist_bef>200 && max_dist >200){
+					if (!config.scaleDescriptors_ && max_dist_bef>200 && max_dist >200){
 						std::cout << termcolor::red <<  " dist is impossible\n"  << termcolor::reset; 
 						assert(0);
 					}
@@ -4315,6 +5291,8 @@ void print_map(const MapType & m)
 					if (max_dist <=200){
 						map_point.descriptor = newDesc;
 					}
+					if (config.scaleDescriptors_)
+						rebuildScaleDesc(c, map_point);
 					map_point.normalVector.normalize();
 
 
@@ -4323,6 +5301,8 @@ void print_map(const MapType & m)
 					map_point.normalVector =  (map_point.position-map_point.birthPose->pose.translation()).normalized();
 					
 					map_point.descriptor = map_point.birthPose->descriptors_left[map_point.birthPose->matches_left_to_right[map_point.birthMatch].queryIdx];
+					if (config.scaleDescriptors_)
+						resetScaleDesc(map_point);
 
 				}
 
@@ -4587,6 +5567,7 @@ void print_map(const MapType & m)
 					assoc.push_back(lm);
 			}
 			std::sort(assoc.begin(), assoc.end());
+			assoc.erase(std::unique(assoc.begin(), assoc.end()), assoc.end());
 			auto emit = [&](int lm, int scale)
 			{
 				pose.fov_.push_back(c.landmarks_[lm].id);
@@ -4631,7 +5612,15 @@ void print_map(const MapType & m)
 		const double stereoGate = 50;
 		const double logPDOdds = std::log(config.PD_) - std::log(1 - config.PD_);
 		const double logGaussNorm = -0.5 * 3 * std::log(2 * M_PI); // 3 is dimension of measurement
+		// dumpDACandidates: every N iterations write each candidate of component 0 as iteration,k,nz,lm,numDet,errPx,scaleDiff,descDist,logp
+		const bool dumpCandidates = config.dumpDACandidates_ > 0 && iteration_ % config.dumpDACandidates_ == 0 && &c == &components_[0];
+		std::ofstream candidateDump;
+		if (dumpCandidates)
+			candidateDump.open(config.resultFolder + "/dacand.csv", std::ios::app);
 
+
+		if (visHMM())
+			visPass(c, minpose);
 
 		// swap with empty vectors to release the buffers; clear() keeps their capacity for every past pose
 		for (int k =0; k< minpose;k++){
@@ -4716,10 +5705,19 @@ void print_map(const MapType & m)
 						double p=0.0;
 
 						int scalediff = abs(predictedScale-octave[nz]);
-						if(scalediff >2){
-							continue;
+						if (multiOctave())
+						{
+							if (scalediff > 3)
+								continue;
+							p += config.scaleLogWeight_;
 						}
-						p += 20-20.0*scalediff;
+						else
+						{
+							if(scalediff >2){
+								continue;
+							}
+							p += config.scaleLogWeight_ * (1 - scalediff);
+						}
 
 						double error_scalar = (c.poses_[k].stereo_points[nz]-predictedZ).vector().norm();
 
@@ -4728,13 +5726,20 @@ void print_map(const MapType & m)
 						}
 
 						//int dist = ORBDescriptor::distance(lm.descriptor, c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx]);
-						double desclikelihood = lm.descriptor.likelihood(c.poses_[k].descriptors_left[c.poses_[k].matches_left_to_right[nz].queryIdx] , c.poses_[k].descriptors_right[c.poses_[k].matches_left_to_right[nz].trainIdx]);
+						double desclikelihood = descLogLik(c.poses_[k], nz, lm, scalediff, true);
 						if (!std::isfinite(desclikelihood) ){
 							continue;
 						}
 						p += desclikelihood;
 
-						if (config.pdAngleTau_ > 0)
+						if (visHMM())
+							p += visSlotLogOdds(c.poses_[k], lmFovIdx, octave[nz]);
+						else if (multiOctave())
+						{
+							double pd = slotPD(c.poses_[k].fov_pd[lmFovIdx], octave[nz] - predictedScale);
+							p += std::log(pd / (1 - pd));
+						}
+						else if (config.pdAngleTau_ > 0)
 						{
 							double pd = c.poses_[k].fov_pd[lmFovIdx];
 							p += std::log(pd / (1 - pd));
@@ -4755,6 +5760,9 @@ void print_map(const MapType & m)
 						}
 					
 					assert(!isnan(p));
+					if (dumpCandidates)
+						candidateDump << iteration_ << "," << k << "," << nz << "," << lmidx << "," << lm.numDetections_ << ","
+									  << error_scalar << "," << scalediff << "," << desclikelihood / ORBDescriptor::logWeightPerBit << "," << p << "\n";
 					if (p  > config.logKappa_ - 1000){
 						c.DAProbs_[k][nz].l.push_back(p);
 						c.DAProbs_[k][nz].i.push_back(lmidx);
@@ -4827,12 +5835,16 @@ void print_map(const MapType & m)
 		lm.mfMaxDistance = pose.point_camera_frame[numMatch].norm() * pose.mvScaleFactors[level] * 1.8;
 		lm.mfScaleRefDistance = config.predictScaleNoMargin_ ? lm.mfMaxDistance / 1.8 : lm.mfMaxDistance;
 		lm.mfMinDistance = lm.mfMaxDistance / pose.mvScaleFactors[nLevels - 1] * 0.3;
+		if (config.maxDistanceFactor_ > 0)
+			lm.mfMaxDistance = pose.point_camera_frame[numMatch].norm() * pose.mvScaleFactors[level] * config.maxDistanceFactor_;
 		pose.initial_lm_id[numMatch] = newId;
 		//pose.Z_[numMatch]->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(lm.pPoint));
 
 		// with only 2 descriptors (left,right) we can pick either one to represent the point
 		// allocating new
 		lm.descriptor = pose.descriptors_left[nl];
+		if (config.scaleDescriptors_)
+			resetScaleDesc(lm);
 		//pose.descriptors_left.row(nl).copyTo(lm.descriptor);
 
 		point_world_frame = pose.pose.transformFrom(pose.point_camera_frame[numMatch]);
@@ -4852,6 +5864,8 @@ void print_map(const MapType & m)
 
 
 		for (auto it:c.current_estimate){
+			if (isNavKey(it.key))
+				continue;
 			if (it.key  < c.poses_.size()){
 				c.poses_[it.key].pose =  it.value.cast<PoseType>();
 			}else{
@@ -4868,7 +5882,8 @@ void print_map(const MapType & m)
 		for (auto index: c.removed_edges){
 			auto result_lm = c.landmark_edge_indices.right.erase(index);
 			auto result_odo = c.odometry_indices.right.erase(index) ;
-			assert(result_lm || result_odo );
+			auto result_imu = c.imu_indices.right.erase(index);
+			assert(result_lm || result_odo || result_imu);
 		}
 		c.removed_edges.clear();
 
@@ -4880,17 +5895,26 @@ void print_map(const MapType & m)
 			}
 			auto k0 = c.new_edges.at(i)->keys()[0];
 			auto k1 = c.new_edges.at(i)->keys()[1];
-			if (k1 < c.poses_.size()){
+			if (std::dynamic_pointer_cast<gtsam::CombinedImuFactor>(c.new_edges.at(i))){
+				c.imu_indices.insert({{(int)k0, (int)c.new_edges.at(i)->keys()[2]}, indices[i]});
+			}else if (k1 < c.poses_.size()){
 				// second key is a pose , so this is odometry
 
 				c.odometry_indices.insert( {k0 , indices[i]});
 
 			}else{
-				auto it = c.DA_bimap_[k0].right.find(k1);
-				assert(it != c.DA_bimap_[k0].right.end());
-				
+				// the measurement whose factor this is (several with multiOctave)
+				auto range = c.DA_bimap_[k0].right.equal_range(k1);
+				auto it = range.first;
+				assert(it != range.second);
+				for (auto r = range.first; r != range.second; ++r)
+					if (c.poses_[k0].Z_[r->second] == c.new_edges.at(i))
+					{
+						it = r;
+						break;
+					}
 
-				std::array<int , 3> association = {k0 , it->second , k1 };
+				std::array<int , 3> association = {(int)k0 , it->second , (int)k1 };
 
 				auto it_index_left  = c.landmark_edge_indices.left.find(association);
 				auto found_index = it_index_left->second;
@@ -5046,7 +6070,7 @@ void print_map(const MapType & m)
 		}
 
 		c.DA_bimap_.resize(c.numPoses_);
-		boost::bimap<int, int, boost::container::allocator<int>> empty_bimap;
+		VectorGLMBComponent6D::FrameBimap empty_bimap;
 		for (int p = 0; p < c.numPoses_; p++)
 		{
 			c.DA_bimap_[p] = empty_bimap;
@@ -5060,11 +6084,14 @@ void print_map(const MapType & m)
 		c.removed_edges.clear();
 		c.new_edges.resize(0);
 
-		c.new_edges.push_back(c.odometries_[0]);
+		if (!config.imu_)
+			c.new_edges.push_back(c.odometries_[0]);
 		c.new_edges.addPrior(0 , c.initial_pose , config.odom_noise );
 
 		c.new_nodes.insert(0,c.poses_[0].pose);
-		c.new_nodes.insert(1,c.poses_[1].pose);
+		if (!config.imu_)
+			c.new_nodes.insert(1,c.poses_[1].pose);
+		addImuPriors(c);
 
 		c.isam_result = isamUpdate(c);
 		c.current_estimate = isamEstimate(c);

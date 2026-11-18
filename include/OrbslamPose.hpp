@@ -99,6 +99,8 @@ namespace rfs
         std::vector<int> fov_; /**< indices of landmarks in field of view at time k */
         std::vector<int> predicted_scales; /**< predicted scales */
         std::vector<double> fov_pd; /**< PD of each fov_ landmark, filled only when PD depends on the viewing angle */
+        std::vector<double> fov_rho; /**< visHMM, window poses: P(visible) of each fov_ landmark given its track without this frame */
+        std::vector<int> fov_abin; /**< visHMM, window poses: viewing-angle bin of each fov_ landmark */
 
         std::vector<StereoMeasurementEdge::shared_ptr> Z_; /**< Measurement edges stored, in order to set data association and add to graph later */
         
